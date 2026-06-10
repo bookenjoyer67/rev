@@ -1,0 +1,101 @@
+use axum::{
+    extract::{Extension, Path, State},
+    middleware,
+    routing::{get, patch, post},
+    Json, Router,
+};
+use serde::Deserialize;
+use uuid::Uuid;
+
+use crate::auth::{require_auth, AuthUser};
+use crate::AppState;
+use super::communities::StatusError;
+
+pub fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/posts/{post_id}/respond", post(respond_to_post))
+        .route("/me/conversations", get(list_conversations))
+        .route("/conversations/{match_id}", get(get_conversation))
+        .route("/conversations/{match_id}/messages", post(send_message))
+        .route("/conversations/{match_id}/status", patch(update_status))
+        .layer(middleware::from_fn(require_auth))
+        .with_state(state)
+}
+
+#[derive(Deserialize)]
+struct RespondRequest {
+    message: String,
+}
+
+async fn respond_to_post(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(post_id): Path<Uuid>,
+    Json(input): Json<RespondRequest>,
+) -> Result<Json<serde_json::Value>, StatusError> {
+    let (match_id, _message_id) = crate::db::conversations::create_match(
+        &state.pool,
+        post_id,
+        auth.user_id,
+        &input.message,
+    )
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "match_id": match_id,
+        "status": "proposed"
+    })))
+}
+
+async fn list_conversations(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+) -> Result<Json<Vec<crate::db::conversations::ConversationPreview>>, StatusError> {
+    let convos = crate::db::conversations::list_conversations(&state.pool, auth.user_id).await?;
+    Ok(Json(convos))
+}
+
+async fn get_conversation(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(match_id): Path<Uuid>,
+) -> Result<Json<crate::db::conversations::Conversation>, StatusError> {
+    let convo = crate::db::conversations::get_conversation(&state.pool, match_id, auth.user_id).await?;
+    Ok(Json(convo))
+}
+
+#[derive(Deserialize)]
+struct SendMessageRequest {
+    body: String,
+}
+
+async fn send_message(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(match_id): Path<Uuid>,
+    Json(input): Json<SendMessageRequest>,
+) -> Result<Json<crate::db::conversations::MessageRow>, StatusError> {
+    let msg = crate::db::conversations::send_message(
+        &state.pool,
+        match_id,
+        auth.user_id,
+        &input.body,
+    )
+    .await?;
+    Ok(Json(msg))
+}
+
+#[derive(Deserialize)]
+struct UpdateStatusRequest {
+    status: String,
+}
+
+async fn update_status(
+    State(state): State<AppState>,
+    Extension(_auth): Extension<AuthUser>,
+    Path(match_id): Path<Uuid>,
+    Json(input): Json<UpdateStatusRequest>,
+) -> Result<Json<serde_json::Value>, StatusError> {
+    crate::db::conversations::update_status(&state.pool, match_id, &input.status).await?;
+    Ok(Json(serde_json::json!({"status": input.status})))
+}

@@ -1,0 +1,16 @@
+{
+	"name": "Komun",
+	"short_name": "Komun",
+	"description": "Federated mutual aid for intercommunal survival",
+	"start_url": "/",
+	"display": "standalone",
+	"background_color": "#0f0f1a",
+	"theme_color": "#1a1a2e",
+	"icons": [
+		{
+			"src": "/favicon.svg",
+			"sizes": "any",
+			"type": "image/svg+xml"
+		}
+	]
+}

@@ -1,0 +1,61 @@
+# Komun node configuration
+# Copy this file to config.toml and edit for your community.
+# Environment variables override values in this file.
+
+[server]
+# Address and port to listen on
+bind_address = "0.0.0.0"
+port = 3000
+# Path to serve frontend static files (remove to run API-only)
+static_dir = "web/build"
+
+[database]
+# PostgreSQL connection string
+url = "postgres://komun:komun@localhost:5432/komun"
+# Connection pool size
+max_connections = 20
+
+[node]
+# Your community's identity — this is how other nodes and users see you
+name = "My Community"
+description = "Mutual aid for our neighborhood"
+# Location helps people find your server in the directory
+# location_name = "East Oakland, CA"
+# location_lat = 37.77
+# location_lon = -122.22
+
+[discovery]
+# Whether this node appears in the public directory
+# Set to true if you want people to find you
+listed = false
+# Directory service URL (where to register)
+# directory_url = "https://komun.buzz"
+# Whether THIS server acts as a directory for other servers
+directory_enabled = false
+# Registration mode: "open" (any server can register) or "approval" (admin must approve)
+registration_mode = "open"
+
+[auth]
+# Secret for signing tokens — CHANGE THIS to something random
+# Generate one with: openssl rand -base64 32
+jwt_secret = "CHANGE-ME-generate-a-random-string-here"
+# How long login sessions last (days)
+token_lifetime_days = 30
+# Spam prevention: max new registrations per hour
+max_registrations_per_hour = 20
+
+[federation]
+# Whether this node participates in federation with other nodes
+enabled = false
+# Your public domain — required for federation
+# This is how other nodes address you
+# domain = "aid.mycommunity.org"
+# Maximum number of allied nodes
+# max_alliances = 50
+
+[security]
+# Rate limiting (per user)
+max_posts_per_hour = 60
+max_messages_per_hour = 200
+# CORS allowed origins ("*" = any Komun frontend can connect)
+allowed_origins = "*"
