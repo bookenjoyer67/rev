@@ -11,7 +11,9 @@ pub async fn list(
     kind: Option<String>,
     category: Option<String>,
     status: Option<String>,
+    q: Option<String>,
 ) -> Result<Vec<Post>> {
+    let search = q.map(|s| format!("%{}%", s));
     let rows = sqlx::query_as::<_, PostRow>(
         r#"SELECT id, community_id, author_id, kind, category, title, body,
            location_name, location_lat, location_lon, urgency, quantity, status,
@@ -22,6 +24,7 @@ pub async fn list(
            AND ($2::text IS NULL OR kind = $2)
            AND ($3::text IS NULL OR category = $3)
            AND ($4::text IS NULL OR status = $4)
+           AND ($5::text IS NULL OR title ILIKE $5 OR body ILIKE $5)
            ORDER BY
              CASE WHEN urgency = 'critical' THEN 0
                   WHEN urgency = 'high' THEN 1
@@ -33,6 +36,7 @@ pub async fn list(
     .bind(kind)
     .bind(category)
     .bind(status)
+    .bind(search)
     .fetch_all(pool)
     .await?;
 

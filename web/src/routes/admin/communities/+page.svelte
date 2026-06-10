@@ -129,4 +129,8 @@
 	.delete-btn:hover { background: #e6394620; }
 
 	.status { text-align: center; color: var(--text-muted); padding: 3rem 0; }
+
+	@media (max-width: 768px) {
+		table { display: block; overflow-x: auto; white-space: nowrap; }
+	}
 </style>

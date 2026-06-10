@@ -30,6 +30,7 @@ struct PostFilters {
     kind: Option<String>,
     category: Option<String>,
     status: Option<String>,
+    q: Option<String>,
 }
 
 async fn list_posts(
@@ -38,7 +39,7 @@ async fn list_posts(
     Query(filters): Query<PostFilters>,
 ) -> Result<Json<Vec<Post>>, StatusError> {
     let community = crate::db::communities::get_by_slug(&state.pool, &slug).await?;
-    let posts = crate::db::posts::list(&state.pool, community.id, filters.kind, filters.category, filters.status).await?;
+    let posts = crate::db::posts::list(&state.pool, community.id, filters.kind, filters.category, filters.status, filters.q).await?;
     Ok(Json(posts))
 }
 
@@ -56,6 +57,18 @@ async fn create_post(
     Path(slug): Path<String>,
     Json(input): Json<CreatePost>,
 ) -> Result<Json<Post>, StatusError> {
+    let recent: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM posts WHERE author_id = $1 AND created_at > now() - interval '1 hour'"
+    )
+    .bind(auth.user_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+
+    if recent >= state.config.security.max_posts_per_hour as i64 {
+        return Err(anyhow::anyhow!("rate limit: max {} posts per hour", state.config.security.max_posts_per_hour).into());
+    }
+
     let community = crate::db::communities::get_by_slug(&state.pool, &slug).await?;
     let post = crate::db::posts::create(&state.pool, community.id, auth.user_id, input).await?;
     Ok(Json(post))

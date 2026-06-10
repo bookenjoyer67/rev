@@ -27,6 +27,7 @@
 	let communities: Community[] = $state([]);
 	let selectedCommunity = $state('');
 	let filter = $state('all');
+	let searchQuery = $state('');
 	let loading = $state(true);
 	let respondingTo: Post | null = $state(null);
 	let editingId: string | null = $state(null);
@@ -87,10 +88,15 @@
 		try {
 			const filters: Record<string, string> = {};
 			if (filter !== 'all') filters.kind = filter;
+			if (searchQuery.trim()) filters.q = searchQuery.trim();
 			posts = await api.posts.list(selectedCommunity, filters);
 		} catch (e) {
 			posts = [];
 		}
+	}
+
+	function handleSearch() {
+		loadPosts();
 	}
 
 	function setFilter(f: string) {
@@ -117,6 +123,13 @@
 			{/each}
 		</div>
 	{/if}
+
+	<form class="search-bar" onsubmit={(e) => { e.preventDefault(); handleSearch(); }}>
+		<input type="text" bind:value={searchQuery} placeholder="Search posts..." />
+		{#if searchQuery}
+			<button type="button" class="clear-search" onclick={() => { searchQuery = ''; handleSearch(); }}>&times;</button>
+		{/if}
+	</form>
 
 	<div class="filters">
 		<button class:active={filter === 'all'} onclick={() => setFilter('all')}>All</button>
@@ -210,6 +223,11 @@
 	}
 
 	.btn-primary:hover { text-decoration: none; }
+
+	.search-bar { display: flex; position: relative; margin-bottom: 0.75rem; }
+	.search-bar input { flex: 1; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.6rem 2rem 0.6rem 0.75rem; color: var(--text); font-size: 0.9rem; }
+	.search-bar input:focus { outline: none; border-color: var(--accent); }
+	.clear-search { position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%); background: none; color: var(--text-muted); font-size: 1.2rem; min-height: 30px; min-width: 30px; }
 
 	.community-select {
 		display: flex;
@@ -330,5 +348,14 @@
 		text-align: center;
 		color: var(--text-muted);
 		padding: 3rem 0;
+	}
+
+	@media (max-width: 480px) {
+		.page-header { flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+		.filters { flex-wrap: wrap; }
+		.community-select { flex-wrap: wrap; }
+		.post-footer { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+		.author-actions { margin-left: 0; }
+		.respond-btn { margin-left: 0; }
 	}
 </style>

@@ -81,4 +81,9 @@
 	.label { display: block; font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
 
 	.status { text-align: center; color: var(--text-muted); padding: 3rem 0; }
+
+	@media (max-width: 480px) {
+		.stats-grid { grid-template-columns: repeat(2, 1fr); }
+		.admin-nav { flex-wrap: wrap; }
+	}
 </style>

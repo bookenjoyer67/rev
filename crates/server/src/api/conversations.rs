@@ -75,6 +75,18 @@ async fn send_message(
     Path(match_id): Path<Uuid>,
     Json(input): Json<SendMessageRequest>,
 ) -> Result<Json<crate::db::conversations::MessageRow>, StatusError> {
+    let recent: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM messages WHERE sender_id = $1 AND created_at > now() - interval '1 hour'"
+    )
+    .bind(auth.user_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+
+    if recent >= state.config.security.max_messages_per_hour as i64 {
+        return Err(anyhow::anyhow!("rate limit: max {} messages per hour", state.config.security.max_messages_per_hour).into());
+    }
+
     let msg = crate::db::conversations::send_message(
         &state.pool,
         match_id,

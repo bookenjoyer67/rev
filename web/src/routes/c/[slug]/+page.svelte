@@ -20,9 +20,14 @@
 		created_at: string;
 	}
 
+	interface Member { display_name: string; role: string; joined_at: string; }
+
 	let community: Community | null = $state(null);
 	let posts: Post[] = $state([]);
+	let members: Member[] = $state([]);
 	let filter = $state('all');
+	let searchQuery = $state('');
+	let showMembers = $state(false);
 	let loading = $state(true);
 	let error = $state('');
 	let respondingTo: Post | null = $state(null);
@@ -78,6 +83,7 @@
 		try {
 			community = await api.communities.get(slug);
 			await loadPosts(slug);
+			members = await api.communities.members(slug);
 		} catch (e: any) {
 			error = e.message || 'Community not found';
 		} finally {
@@ -88,7 +94,12 @@
 	async function loadPosts(slug: string) {
 		const filters: Record<string, string> = {};
 		if (filter !== 'all') filters.kind = filter;
+		if (searchQuery.trim()) filters.q = searchQuery.trim();
 		posts = await api.posts.list(slug, filters);
+	}
+
+	function handleSearch() {
+		if (community) loadPosts(community.slug);
 	}
 
 	function setFilter(f: string) {
@@ -123,6 +134,13 @@
 			</div>
 			<a href="/aid/new" class="btn-post">Post</a>
 		</header>
+
+		<form class="search-bar" onsubmit={(e) => { e.preventDefault(); handleSearch(); }}>
+			<input type="text" bind:value={searchQuery} placeholder="Search posts..." />
+			{#if searchQuery}
+				<button type="button" class="clear-search" onclick={() => { searchQuery = ''; handleSearch(); }}>&times;</button>
+			{/if}
+		</form>
 
 		<div class="filters">
 			<button class:active={filter === 'all'} onclick={() => setFilter('all')}>All</button>
@@ -184,6 +202,23 @@
 				{/each}
 			</ul>
 		{/if}
+		{#if members.length > 0}
+			<button class="members-toggle" onclick={() => showMembers = !showMembers}>
+				{showMembers ? 'Hide' : 'Show'} members ({members.length})
+			</button>
+			{#if showMembers}
+				<ul class="member-list">
+					{#each members as member}
+						<li>
+							<span class="member-name">{member.display_name}</span>
+							{#if member.role !== 'member'}
+								<span class="member-role">{member.role}</span>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		{/if}
 	{/if}
 </div>
 
@@ -206,6 +241,36 @@
 	h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
 	.desc { color: var(--text-muted); font-size: 0.9rem; }
 	.location { color: var(--text-muted); font-size: 0.8rem; }
+
+	.search-bar {
+		display: flex;
+		position: relative;
+		margin-bottom: 0.75rem;
+	}
+
+	.search-bar input {
+		flex: 1;
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		padding: 0.6rem 2rem 0.6rem 0.75rem;
+		color: var(--text);
+		font-size: 0.9rem;
+	}
+
+	.search-bar input:focus { outline: none; border-color: var(--accent); }
+
+	.clear-search {
+		position: absolute;
+		right: 0.5rem;
+		top: 50%;
+		transform: translateY(-50%);
+		background: none;
+		color: var(--text-muted);
+		font-size: 1.2rem;
+		min-height: 30px;
+		min-width: 30px;
+	}
 
 	.btn-post {
 		background: var(--accent);
@@ -347,6 +412,47 @@
 	.save-btn { background: var(--accent); color: white; padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; font-weight: 600; }
 	.cancel-btn { background: var(--bg-elevated); color: var(--text-muted); padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; border: 1px solid var(--border); }
 
+	.members-toggle {
+		background: var(--bg-surface);
+		color: var(--text-muted);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		padding: 0.5rem 1rem;
+		font-size: 0.85rem;
+		width: 100%;
+		margin-top: 1.5rem;
+	}
+
+	.member-list {
+		list-style: none;
+		margin-top: 0.75rem;
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		overflow: hidden;
+	}
+
+	.member-list li {
+		padding: 0.6rem 1rem;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		border-bottom: 1px solid var(--border);
+		font-size: 0.9rem;
+	}
+
+	.member-list li:last-child { border-bottom: none; }
+	.member-role { font-size: 0.7rem; color: var(--warning); text-transform: uppercase; font-weight: 600; }
+
 	.status { text-align: center; color: var(--text-muted); padding: 3rem 0; }
 	.error { color: var(--critical); }
+
+	@media (max-width: 480px) {
+		.community-header { flex-direction: column; gap: 0.75rem; }
+		.btn-post { align-self: flex-start; }
+		.filters { flex-wrap: wrap; }
+		.post-footer { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+		.author-actions { margin-left: 0; }
+		.respond-btn { margin-left: 0; }
+	}
 </style>

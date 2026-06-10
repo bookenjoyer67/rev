@@ -312,4 +312,11 @@
 
 	.status { text-align: center; color: var(--text-muted); padding: 3rem 0; }
 	.err { color: var(--critical); }
+
+	@media (max-width: 480px) {
+		.bubble { max-width: 85%; }
+		.thread-header { flex-wrap: wrap; }
+		h2 { font-size: 1rem; }
+		.send-form { position: sticky; bottom: 0; background: var(--bg); padding: 0.5rem 0; }
+	}
 </style>

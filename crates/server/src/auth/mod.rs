@@ -98,6 +98,20 @@ async fn register(
     State(state): State<AppState>,
     Json(input): Json<RegisterRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let recent_registrations: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM users WHERE created_at > now() - interval '1 hour'"
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+
+    if recent_registrations >= state.config.auth.max_registrations_per_hour as i64 {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({"error": "too many registrations, try again later"})),
+        ));
+    }
+
     let public_key = decode_b64(&input.public_key)?;
     let encryption_pk = input.encryption_public_key.as_ref().and_then(|k| decode_b64(k).ok());
     let bundle = input.encrypted_key_bundle.as_ref().and_then(|k| decode_b64(k).ok());

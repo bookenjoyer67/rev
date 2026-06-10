@@ -140,4 +140,9 @@
 		font-size: 0.75rem;
 		font-style: italic;
 	}
+
+	@media (max-width: 480px) {
+		.footer { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+		.respond-btn { align-self: flex-start; }
+	}
 </style>

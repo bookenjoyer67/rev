@@ -7,6 +7,7 @@
 
 	let { children } = $props();
 	let unreadCount = $state(0);
+	let menuOpen = $state(false);
 
 	onMount(() => {
 		refreshRole();
@@ -30,6 +31,10 @@
 			}
 		} catch {}
 	}
+
+	function closeMenu() {
+		menuOpen = false;
+	}
 </script>
 
 <svelte:head>
@@ -39,25 +44,30 @@
 
 <header>
 	<nav class="container">
-		<a href="/" class="logo">komun</a>
-		<div class="nav-links">
+		<a href="/" class="logo" onclick={closeMenu}>komun</a>
+
+		<button class="hamburger" class:open={menuOpen} onclick={() => menuOpen = !menuOpen} aria-label="Menu">
+			<span></span><span></span><span></span>
+		</button>
+
+		<div class="nav-links" class:show={menuOpen}>
 			{#if $serverState.active}
-				<a href="/aid">Aid</a>
-				<a href="/community">Community</a>
+				<a href="/aid" onclick={closeMenu}>Aid</a>
+				<a href="/community" onclick={closeMenu}>Community</a>
 				{#if $auth.servers?.[$serverState.active]}
-					<a href="/messages">Messages</a>
-					<a href="/notifications" class="notif-link">
+					<a href="/messages" onclick={closeMenu}>Messages</a>
+					<a href="/notifications" class="notif-link" onclick={closeMenu}>
 						Alerts
 						{#if unreadCount > 0}
 							<span class="notif-badge">{unreadCount}</span>
 						{/if}
 					</a>
 					{#if $auth.servers[$serverState.active].role === 'superadmin'}
-						<a href="/admin" class="admin-link">Admin</a>
+						<a href="/admin" class="admin-link" onclick={closeMenu}>Admin</a>
 					{/if}
 				{/if}
 			{/if}
-			<a href="/connect">Connect</a>
+			<a href="/connect" onclick={closeMenu}>Connect</a>
 			{#if $serverState.active && $auth.servers?.[$serverState.active]}
 				<span class="identity">{$auth.servers[$serverState.active].displayName}</span>
 			{/if}
@@ -74,7 +84,7 @@
 <style>
 	header {
 		border-bottom: 1px solid var(--border);
-		padding: 1rem 0;
+		padding: 0.75rem 0;
 		position: sticky;
 		top: 0;
 		background: var(--bg);
@@ -85,6 +95,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		position: relative;
 	}
 
 	.logo {
@@ -92,11 +103,45 @@
 		font-weight: 700;
 		color: var(--text);
 		letter-spacing: -0.5px;
+		z-index: 2;
 	}
 
 	.logo:hover {
 		text-decoration: none;
 		color: var(--accent);
+	}
+
+	.hamburger {
+		display: none;
+		flex-direction: column;
+		gap: 5px;
+		background: none;
+		padding: 8px;
+		z-index: 2;
+		min-height: 44px;
+		min-width: 44px;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.hamburger span {
+		display: block;
+		width: 22px;
+		height: 2px;
+		background: var(--text);
+		transition: all 0.2s;
+	}
+
+	.hamburger.open span:nth-child(1) {
+		transform: rotate(45deg) translate(5px, 5px);
+	}
+
+	.hamburger.open span:nth-child(2) {
+		opacity: 0;
+	}
+
+	.hamburger.open span:nth-child(3) {
+		transform: rotate(-45deg) translate(5px, -5px);
 	}
 
 	.nav-links {
@@ -108,6 +153,7 @@
 	.nav-links a {
 		color: var(--text-muted);
 		font-size: 0.9rem;
+		padding: 0.25rem 0;
 	}
 
 	.nav-links a:hover {
@@ -151,6 +197,52 @@
 	}
 
 	main {
-		padding: 2rem 0;
+		padding: 1.5rem 0;
+	}
+
+	@media (max-width: 768px) {
+		.hamburger {
+			display: flex;
+		}
+
+		.nav-links {
+			display: none;
+			position: fixed;
+			top: 50px;
+			left: 0;
+			right: 0;
+			flex-direction: column;
+			background: var(--bg-surface);
+			border-bottom: 1px solid var(--border);
+			padding: 1rem;
+			gap: 0;
+			z-index: 100;
+		}
+
+		.nav-links.show {
+			display: flex;
+		}
+
+		.nav-links a {
+			padding: 0.75rem 0;
+			font-size: 1rem;
+			border-bottom: 1px solid var(--border);
+			width: 100%;
+		}
+
+		.nav-links a:last-of-type {
+			border-bottom: none;
+		}
+
+		.identity {
+			margin-top: 0.75rem;
+			text-align: center;
+		}
+
+		.notif-badge {
+			position: static;
+			display: inline-flex;
+			margin-left: 0.5rem;
+		}
 	}
 </style>

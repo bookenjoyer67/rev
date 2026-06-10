@@ -12,7 +12,8 @@ use crate::AppState;
 pub fn router(state: AppState) -> Router {
     let public = Router::new()
         .route("/", get(list_communities))
-        .route("/{slug}", get(get_community));
+        .route("/{slug}", get(get_community))
+        .route("/{slug}/members", get(list_members));
 
     let protected = Router::new()
         .route("/", post(create_community))
@@ -68,6 +69,27 @@ async fn join_community(
     crate::db::communities::use_invite(&state.pool, &payload.code).await?;
     crate::db::communities::add_member(&state.pool, community.id, auth.user_id, "member").await?;
     Ok(Json(serde_json::json!({"status": "joined"})))
+}
+
+#[derive(serde::Serialize, sqlx::FromRow)]
+struct MemberInfo {
+    display_name: String,
+    role: String,
+    joined_at: chrono::DateTime<chrono::Utc>,
+}
+
+async fn list_members(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<Vec<MemberInfo>>, StatusError> {
+    let community = crate::db::communities::get_by_slug(&state.pool, &slug).await?;
+    let members = sqlx::query_as::<_, MemberInfo>(
+        "SELECT display_name, role, joined_at FROM members WHERE community_id = $1 ORDER BY joined_at"
+    )
+    .bind(community.id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(members))
 }
 
 #[derive(serde::Deserialize)]

@@ -41,6 +41,7 @@ export const api = {
 	communities: {
 		list: () => request<any[]>('/communities'),
 		get: (slug: string) => request<any>(`/communities/${slug}`),
+		members: (slug: string) => request<any[]>(`/communities/${slug}/members`),
 		create: (data: { name: string; slug: string; description?: string; location_name?: string }) =>
 			request<any>('/communities', {
 				method: 'POST',
