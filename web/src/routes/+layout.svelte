@@ -8,13 +8,34 @@
 	let { children } = $props();
 	let unreadCount = $state(0);
 	let menuOpen = $state(false);
+	let online = $state(true);
+	let offlineDismissed = $state(false);
+	let installPrompt: any = $state(null);
+	let showInstall = $state(false);
 
 	onMount(() => {
+		online = navigator.onLine;
+		window.addEventListener('online', () => { online = true; offlineDismissed = false; });
+		window.addEventListener('offline', () => { online = false; offlineDismissed = false; });
+
+		if (!window.matchMedia('(display-mode: standalone)').matches) {
+			window.addEventListener('beforeinstallprompt', (e: Event) => {
+				e.preventDefault();
+				installPrompt = e;
+				showInstall = true;
+			});
+		}
+
 		refreshRole();
 		pollNotifications();
 		const interval = setInterval(pollNotifications, 15000);
 		return () => clearInterval(interval);
 	});
+
+	function handleInstall() {
+		installPrompt?.prompt();
+		showInstall = false;
+	}
 
 	async function pollNotifications() {
 		if (!isAuthenticated()) return;
@@ -75,9 +96,24 @@
 	</nav>
 </header>
 
+{#if !online && !offlineDismissed}
+	<div class="offline-banner">
+		<span>You're offline. Showing cached data.</span>
+		<button class="dismiss-btn" onclick={() => offlineDismissed = true}>&times;</button>
+	</div>
+{/if}
+
 <main>
 	{@render children()}
 </main>
+
+{#if showInstall}
+	<div class="install-banner">
+		<span>Install Komun for faster access</span>
+		<button class="install-btn" onclick={handleInstall}>Install</button>
+		<button class="dismiss-btn" onclick={() => showInstall = false}>&times;</button>
+	</div>
+{/if}
 
 <Onboarding />
 
@@ -198,6 +234,52 @@
 
 	main {
 		padding: 1.5rem 0;
+	}
+
+	.offline-banner {
+		background: var(--warning);
+		color: #000;
+		padding: 0.5rem 1rem;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		gap: 1rem;
+		font-size: 0.85rem;
+		font-weight: 600;
+	}
+
+	.install-banner {
+		position: fixed;
+		bottom: 0;
+		left: 0;
+		right: 0;
+		background: var(--bg-surface);
+		border-top: 1px solid var(--border);
+		padding: 0.75rem 1rem;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		gap: 1rem;
+		font-size: 0.9rem;
+		z-index: 200;
+	}
+
+	.install-btn {
+		background: var(--accent);
+		color: white;
+		padding: 0.4rem 1rem;
+		border-radius: var(--radius);
+		font-weight: 600;
+		font-size: 0.85rem;
+	}
+
+	.dismiss-btn {
+		background: none;
+		color: inherit;
+		font-size: 1.2rem;
+		opacity: 0.7;
+		min-height: 30px;
+		min-width: 30px;
 	}
 
 	@media (max-width: 768px) {
