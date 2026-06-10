@@ -59,3 +59,14 @@ max_posts_per_hour = 60
 max_messages_per_hour = 200
 # CORS allowed origins ("*" = any Komun frontend can connect)
 allowed_origins = "*"
+
+[posts]
+# Default time-to-live for posts by kind (days, 0 = never expires)
+default_ttl_need_days = 7
+default_ttl_offer_days = 14
+default_ttl_resource_days = 0
+
+[admin]
+# Base64-encoded public keys of superadmins
+# Use CLI to promote users: komun-server admin add-superadmin <pubkey>
+# superadmin_keys = ["base64key1", "base64key2"]

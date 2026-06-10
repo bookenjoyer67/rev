@@ -1,3 +1,4 @@
+use argon2::{Argon2, Algorithm, Version, Params};
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
     XChaCha20Poly1305, XNonce,
@@ -229,4 +230,93 @@ pub fn decrypt_message(envelope: &[u8], my_x25519_sk: &[u8]) -> Result<Vec<u8>, 
         .map_err(|_| JsValue::from_str("decryption failed"))?;
 
     Ok(plaintext)
+}
+
+#[wasm_bindgen]
+pub fn generate_salt() -> Vec<u8> {
+    let mut salt = vec![0u8; 16];
+    OsRng.fill_bytes(&mut salt);
+    salt
+}
+
+#[wasm_bindgen]
+pub fn derive_key_from_passphrase(passphrase: &[u8], salt: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let params = Params::new(4096, 3, 1, Some(32))
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+
+    let mut key = vec![0u8; 32];
+    argon2.hash_password_into(passphrase, salt, &mut key)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    Ok(key)
+}
+
+#[wasm_bindgen]
+pub fn encrypt_key_bundle(
+    ed25519_secret: &[u8],
+    x25519_secret: &[u8],
+    derived_key: &[u8],
+) -> Result<Vec<u8>, JsValue> {
+    let key_bytes: [u8; 32] = derived_key
+        .try_into()
+        .map_err(|_| JsValue::from_str("invalid derived key length"))?;
+
+    let mut plaintext = Vec::with_capacity(64);
+    plaintext.extend_from_slice(ed25519_secret);
+    plaintext.extend_from_slice(x25519_secret);
+
+    let cipher = XChaCha20Poly1305::new_from_slice(&key_bytes)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let mut nonce_bytes = [0u8; 24];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = XNonce::from_slice(&nonce_bytes);
+
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext.as_slice())
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let mut result = Vec::with_capacity(24 + ciphertext.len());
+    result.extend_from_slice(&nonce_bytes);
+    result.extend_from_slice(&ciphertext);
+    Ok(result)
+}
+
+#[wasm_bindgen]
+pub fn decrypt_key_bundle(
+    encrypted: &[u8],
+    derived_key: &[u8],
+) -> Result<Vec<u8>, JsValue> {
+    if encrypted.len() < 24 + 16 {
+        return Err(JsValue::from_str("bundle too short"));
+    }
+
+    let key_bytes: [u8; 32] = derived_key
+        .try_into()
+        .map_err(|_| JsValue::from_str("invalid derived key length"))?;
+
+    let nonce = XNonce::from_slice(&encrypted[..24]);
+    let ciphertext = &encrypted[24..];
+
+    let cipher = XChaCha20Poly1305::new_from_slice(&key_bytes)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| JsValue::from_str("wrong passphrase or corrupted bundle"))
+}
+
+#[wasm_bindgen]
+pub fn compute_recovery_id(passphrase: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let fixed_salt = b"komun-recovery-v1";
+    let params = Params::new(4096, 3, 1, Some(32))
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+
+    let mut hash = vec![0u8; 32];
+    argon2.hash_password_into(passphrase, fixed_salt, &mut hash)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    Ok(hash[..16].to_vec())
 }

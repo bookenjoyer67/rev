@@ -1,7 +1,7 @@
 import { writable, get } from 'svelte/store';
 
 const STORAGE_KEY = 'komun_directories';
-const DEFAULT_DIRECTORIES = ['http://localhost:3000'];
+const DEFAULT_DIRECTORIES = [import.meta.env.VITE_DEFAULT_DIRECTORY || 'https://api.komun.buzz'];
 
 function loadFromStorage(): string[] {
 	if (typeof localStorage === 'undefined') return DEFAULT_DIRECTORIES;

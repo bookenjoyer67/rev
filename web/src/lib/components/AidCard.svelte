@@ -1,6 +1,8 @@
 <script lang="ts">
 	import type { AggregatedPost } from '$lib/api/discovery';
 	import RespondModal from './RespondModal.svelte';
+	import { auth } from '$lib/stores/auth';
+	import { getActiveServer } from '$lib/stores/server';
 
 	interface Props {
 		post: AggregatedPost;
@@ -8,6 +10,12 @@
 
 	let { post }: Props = $props();
 	let showModal = $state(false);
+
+	let myUserId = $derived((() => {
+		const server = getActiveServer();
+		if (!server) return null;
+		return $auth.servers?.[server]?.userId || null;
+	})());
 
 	const kindLabels: Record<string, string> = { resource: 'Resource', need: 'Need', offer: 'Offer' };
 	const urgencyColors: Record<string, string> = { critical: 'var(--critical)', high: 'var(--warning)', medium: 'var(--text-muted)', low: 'var(--text-muted)' };
@@ -43,17 +51,21 @@
 			<span class="server">{post.server_name}</span>
 		</div>
 
-		{#if post.kind === 'need'}
-			<button class="respond-btn" onclick={() => showModal = true}>I can help</button>
-		{:else if post.kind === 'offer'}
-			<button class="respond-btn" onclick={() => showModal = true}>Request this</button>
+		{#if post.author_id !== myUserId}
+			{#if post.kind === 'need'}
+				<button class="respond-btn" onclick={() => showModal = true}>I can help</button>
+			{:else if post.kind === 'offer'}
+				<button class="respond-btn" onclick={() => showModal = true}>Request this</button>
+			{/if}
+		{:else}
+			<span class="your-post">Your post</span>
 		{/if}
 	</div>
 </article>
 
 {#if showModal}
 	<RespondModal
-		post={{ id: post.id, title: post.title, kind: post.kind, server_url: post.server_url, community_slug: post.community_slug }}
+		post={{ id: post.id, title: post.title, kind: post.kind, server_url: post.server_url, community_slug: post.community_slug, author_id: post.author_id }}
 		onClose={() => showModal = false}
 	/>
 {/if}
@@ -122,4 +134,10 @@
 	}
 
 	.respond-btn:hover { opacity: 0.9; }
+
+	.your-post {
+		color: var(--text-muted);
+		font-size: 0.75rem;
+		font-style: italic;
+	}
 </style>

@@ -83,6 +83,18 @@ export const api = {
 				auth: true,
 			});
 		},
+		update: (slug: string, id: string, data: { title?: string; body?: string; urgency?: string; status?: string }) =>
+			request<any>(`/communities/${slug}/posts/${id}`, {
+				method: 'PATCH',
+				body: JSON.stringify(data),
+				auth: true,
+			}),
+		fulfill: (slug: string, id: string) =>
+			request<any>(`/communities/${slug}/posts/${id}`, {
+				method: 'PATCH',
+				body: JSON.stringify({ status: 'fulfilled' }),
+				auth: true,
+			}),
 		withdraw: (slug: string, id: string) =>
 			request<any>(`/communities/${slug}/posts/${id}`, {
 				method: 'DELETE',
@@ -109,5 +121,20 @@ export const api = {
 
 	alliances: {
 		list: () => request<any[]>('/alliances'),
+	},
+
+	admin: {
+		stats: () => request<any>('/admin/stats', { auth: true }),
+		listUsers: () => request<any[]>('/admin/users', { auth: true }),
+		deleteUser: (id: string) => request<any>(`/admin/users/${id}`, { method: 'DELETE', auth: true }),
+		changeRole: (id: string, role: string) => request<any>(`/admin/users/${id}/role`, {
+			method: 'PATCH',
+			body: JSON.stringify({ role }),
+			auth: true,
+		}),
+		listCommunities: () => request<any[]>('/admin/communities', { auth: true }),
+		deleteCommunity: (id: string) => request<any>(`/admin/communities/${id}`, { method: 'DELETE', auth: true }),
+		listDirectory: () => request<any[]>('/admin/directory', { auth: true }),
+		removeDirectoryEntry: (url: string) => request<any>(`/admin/directory/${encodeURIComponent(url)}`, { method: 'DELETE', auth: true }),
 	},
 };

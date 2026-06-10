@@ -4,5 +4,11 @@ import wasm from 'vite-plugin-wasm';
 import topLevelAwait from 'vite-plugin-top-level-await';
 
 export default defineConfig({
-	plugins: [sveltekit(), wasm(), topLevelAwait()]
+	plugins: [sveltekit(), wasm(), topLevelAwait()],
+	server: {
+		allowedHosts: ['komun.buzz', 'localhost'],
+		fs: {
+			allow: ['..']
+		}
+	}
 });

@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { isAuthenticated, register, auth } from '$lib/stores/auth';
+	import { isAuthenticated, register, auth, getEncryptionSecretKey } from '$lib/stores/auth';
 	import { connectToServer, isConnected, getActiveServer } from '$lib/stores/server';
 	import { api } from '$lib/api/client';
+	import { deriveConversationKey, encryptMessage } from '$lib/crypto';
 
 	interface Props {
 		post: {
@@ -11,6 +12,7 @@
 			kind: string;
 			server_url: string;
 			community_slug: string;
+			author_id?: string;
 		};
 		onClose: () => void;
 	}
@@ -49,7 +51,28 @@
 				if (!ok) { error = 'Failed to create identity'; loading = false; return; }
 			}
 
-			const result = await api.posts.respond(post.id, message.trim(), post.server_url);
+			let body = message.trim();
+
+			if (post.author_id) {
+				const mySecret = getEncryptionSecretKey();
+				if (mySecret) {
+					try {
+						const server = getActiveServer();
+						const res = await fetch(`${server}/api/auth/users/${post.author_id}/keys`);
+						if (res.ok) {
+							const keys = await res.json();
+							if (keys.encryption_public_key) {
+								const sharedKey = await deriveConversationKey(mySecret, keys.encryption_public_key);
+								body = await encryptMessage(body, sharedKey);
+							}
+						}
+					} catch {
+						// fall back to plaintext
+					}
+				}
+			}
+
+			const result = await api.posts.respond(post.id, body, post.server_url);
 			matchId = result.match_id;
 			success = true;
 		} catch (e: any) {

@@ -2,6 +2,7 @@ mod api;
 pub mod auth;
 pub mod config;
 mod db;
+mod repl;
 mod tasks;
 
 use std::sync::Arc;
@@ -26,14 +27,13 @@ pub struct AppState {
 async fn main() {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| "komun_server=debug,tower_http=debug".into()))
+            .unwrap_or_else(|_| "komun_server=info,tower_http=info".into()))
         .with(tracing_subscriber::fmt::layer())
         .init();
 
     dotenvy::dotenv().ok();
 
     let config = Config::load().expect("failed to load configuration");
-    tracing::info!("loaded config: node={}", config.node.name);
 
     std::env::set_var("JWT_SECRET", &config.auth.jwt_secret);
 
@@ -61,12 +61,23 @@ async fn main() {
         .layer(TraceLayer::new_for_http());
 
     if let Some(ref static_dir) = config.server.static_dir {
-        app = app.fallback_service(ServeDir::new(static_dir));
+        if !static_dir.is_empty() {
+            app = app.fallback_service(ServeDir::new(static_dir));
+        }
     }
 
     let bind = config.bind_addr();
     let listener = tokio::net::TcpListener::bind(&bind).await.unwrap();
 
     tracing::info!("komun listening on {}", bind);
-    axum::serve(listener, app).await.unwrap();
+
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        repl::run_repl(state).await;
+    } else {
+        server.await.unwrap();
+    }
 }

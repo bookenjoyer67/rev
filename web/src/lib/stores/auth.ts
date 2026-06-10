@@ -1,17 +1,19 @@
 import { writable, get } from 'svelte/store';
 import { getActiveServer } from './server';
-import { generateEncryptionKeypair } from '$lib/crypto';
+import { generateFullKeypair, createKeyBundle, recoverFromBundle, computeRecoveryId } from '$lib/crypto';
 
 interface PerServerAuth {
 	token: string;
 	userId: string;
 	displayName: string;
+	role: string;
 }
 
 interface KeyPair {
-	publicKey: string;
-	encryptionPublicKey: string;
-	encryptionSecretKey: string;
+	ed25519PublicKey: string;
+	ed25519SecretKey: string;
+	x25519PublicKey: string;
+	x25519SecretKey: string;
 }
 
 interface AuthState {
@@ -28,7 +30,11 @@ function loadFromStorage(): AuthState {
 	try {
 		const parsed = JSON.parse(raw);
 		if (!parsed.servers || typeof parsed.servers !== 'object') {
-			return { keypair: parsed.keypair || null, servers: {} };
+			return { keypair: null, servers: {} };
+		}
+		if (parsed.keypair && !parsed.keypair.x25519SecretKey) {
+			parsed.keypair = null;
+			parsed.servers = {};
 		}
 		return parsed;
 	} catch {
@@ -39,12 +45,6 @@ function loadFromStorage(): AuthState {
 function saveToStorage(state: AuthState) {
 	if (typeof localStorage === 'undefined') return;
 	localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
-
-function generateIdentityKey(): string {
-	const bytes = new Uint8Array(32);
-	crypto.getRandomValues(bytes);
-	return btoa(String.fromCharCode(...bytes));
 }
 
 export const auth = writable<AuthState>(loadFromStorage());
@@ -70,39 +70,49 @@ export function getDisplayName(): string | null {
 }
 
 export function getEncryptionSecretKey(): string | null {
-	return get(auth).keypair?.encryptionSecretKey || null;
+	return get(auth).keypair?.x25519SecretKey || null;
 }
 
 export function getEncryptionPublicKey(): string | null {
-	return get(auth).keypair?.encryptionPublicKey || null;
+	return get(auth).keypair?.x25519PublicKey || null;
 }
 
-export async function register(displayName: string): Promise<boolean> {
+export function getPublicKey(): string | null {
+	return get(auth).keypair?.ed25519PublicKey || null;
+}
+
+export async function register(displayName: string, passphrase?: string): Promise<boolean> {
 	const server = getActiveServer();
 	if (!server) return false;
 
 	let state = get(auth);
 	if (!state.keypair) {
-		const encKp = await generateEncryptionKeypair();
-		state = {
-			...state,
-			keypair: {
-				publicKey: generateIdentityKey(),
-				encryptionPublicKey: encKp.publicKey,
-				encryptionSecretKey: encKp.secretKey,
-			},
-		};
+		const kp = await generateFullKeypair();
+		state = { ...state, keypair: kp };
 		auth.set(state);
+	}
+
+	const body: Record<string, string> = {
+		display_name: displayName,
+		public_key: state.keypair!.ed25519PublicKey,
+		encryption_public_key: state.keypair!.x25519PublicKey,
+	};
+
+	if (passphrase && passphrase.length > 0) {
+		const bundle = await createKeyBundle(
+			state.keypair!.ed25519SecretKey,
+			state.keypair!.x25519SecretKey,
+			passphrase
+		);
+		body.encrypted_key_bundle = bundle.encryptedBundle;
+		body.bundle_salt = bundle.salt;
+		body.recovery_id = bundle.recoveryId;
 	}
 
 	const res = await fetch(`${server}/api/auth/register`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			display_name: displayName,
-			public_key: state.keypair!.publicKey,
-			encryption_public_key: state.keypair!.encryptionPublicKey,
-		}),
+		body: JSON.stringify(body),
 	});
 
 	if (!res.ok) return false;
@@ -116,11 +126,95 @@ export async function register(displayName: string): Promise<boolean> {
 				token: data.token,
 				userId: data.user_id,
 				displayName: data.display_name,
+				role: data.role || 'user',
 			},
 		},
 	}));
 
 	return true;
+}
+
+export function isSuperadmin(): boolean {
+	const auth_data = getActiveAuth();
+	return auth_data?.role === 'superadmin';
+}
+
+export async function recover(serverUrl: string, passphrase: string): Promise<boolean> {
+	try {
+		const recoveryId = await computeRecoveryId(passphrase);
+
+		const res = await fetch(`${serverUrl}/api/auth/recover`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ recovery_id: recoveryId }),
+		});
+
+		if (!res.ok) return false;
+
+		const data = await res.json();
+		const keys = await recoverFromBundle(data.encrypted_key_bundle, data.bundle_salt, passphrase);
+
+		const keypair: KeyPair = {
+			ed25519PublicKey: data.public_key,
+			ed25519SecretKey: keys.ed25519Secret,
+			x25519PublicKey: data.encryption_public_key || '',
+			x25519SecretKey: keys.x25519Secret,
+		};
+
+		auth.set({ keypair, servers: {} });
+
+		const regRes = await fetch(`${serverUrl}/api/auth/register`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				display_name: data.display_name,
+				public_key: data.public_key,
+				encryption_public_key: data.encryption_public_key,
+			}),
+		});
+
+		if (regRes.ok) {
+			const regData = await regRes.json();
+			auth.update((s) => ({
+				...s,
+				servers: {
+					...s.servers,
+					[serverUrl]: {
+						token: regData.token,
+						userId: regData.user_id,
+						displayName: regData.display_name,
+						role: regData.role || 'user',
+					},
+				},
+			}));
+		}
+
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export async function refreshRole(): Promise<void> {
+	const server = getActiveServer();
+	const token = getToken();
+	if (!server || !token) return;
+	try {
+		const res = await fetch(`${server}/api/auth/me`, {
+			headers: { 'Authorization': `Bearer ${token}` }
+		});
+		if (!res.ok) return;
+		const data = await res.json();
+		if (data.role) {
+			auth.update((s) => ({
+				...s,
+				servers: {
+					...s.servers,
+					[server]: { ...s.servers[server], role: data.role },
+				},
+			}));
+		}
+	} catch {}
 }
 
 export function logout() {

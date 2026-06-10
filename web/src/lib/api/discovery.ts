@@ -27,6 +27,7 @@ export interface AggregatedPost {
 	location_name?: string;
 	urgency?: string;
 	status: string;
+	author_id: string;
 	created_at: string;
 	server_url: string;
 	server_name: string;

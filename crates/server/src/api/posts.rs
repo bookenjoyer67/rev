@@ -61,12 +61,26 @@ async fn create_post(
     Ok(Json(post))
 }
 
+#[derive(Deserialize)]
+struct UpdatePostRequest {
+    title: Option<String>,
+    body: Option<String>,
+    urgency: Option<String>,
+    status: Option<String>,
+}
+
 async fn update_post(
-    State(_state): State<AppState>,
-    Extension(_auth): Extension<AuthUser>,
-    Path((_slug, _id)): Path<(String, uuid::Uuid)>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path((_slug, id)): Path<(String, uuid::Uuid)>,
+    Json(input): Json<UpdatePostRequest>,
 ) -> Result<Json<serde_json::Value>, StatusError> {
-    Ok(Json(serde_json::json!({"status": "todo"})))
+    let post = crate::db::posts::get(&state.pool, id).await?;
+    if post.author_id != auth.user_id {
+        return Ok(Json(serde_json::json!({"error": "not your post"})));
+    }
+    crate::db::posts::update(&state.pool, id, input.title, input.body, input.urgency, input.status).await?;
+    Ok(Json(serde_json::json!({"status": "updated"})))
 }
 
 async fn withdraw_post(

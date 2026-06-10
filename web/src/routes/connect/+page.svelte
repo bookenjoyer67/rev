@@ -1,11 +1,35 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { connectToServer, serverState, type NodeInfo } from '$lib/stores/server';
+	import { recover } from '$lib/stores/auth';
 
 	let url = $state('');
 	let error = $state('');
 	let loading = $state(false);
 	let nodeInfo: NodeInfo | null = $state(null);
+
+	let showRecover = $state(false);
+	let recoverUrl = $state('');
+	let recoverPassphrase = $state('');
+	let recoverError = $state('');
+	let recoverLoading = $state(false);
+	let recoverSuccess = $state(false);
+
+	async function handleRecover() {
+		if (!recoverUrl.trim()) { recoverError = 'Enter a server URL'; return; }
+		if (!recoverPassphrase.trim()) { recoverError = 'Enter your passphrase'; return; }
+		recoverLoading = true;
+		recoverError = '';
+		const ok = await recover(recoverUrl.trim().replace(/\/+$/, ''), recoverPassphrase);
+		recoverLoading = false;
+		if (ok) {
+			recoverSuccess = true;
+			try { await connectToServer(recoverUrl.trim()); } catch {}
+			setTimeout(() => goto('/'), 1000);
+		} else {
+			recoverError = 'Recovery failed. Check your passphrase and server URL.';
+		}
+	}
 
 	async function handleConnect() {
 		if (!url.trim()) { error = 'Enter a server URL'; return; }
@@ -75,6 +99,29 @@
 				</ul>
 			</div>
 		{/if}
+
+		<div class="recover-section">
+			{#if !showRecover}
+				<button class="recover-toggle" onclick={() => showRecover = true}>
+					Recover an existing identity
+				</button>
+			{:else if recoverSuccess}
+				<p class="recover-success">Identity recovered! Redirecting...</p>
+			{:else}
+				<h3>Recover identity</h3>
+				<p class="recover-hint">Enter a server you've used before and your recovery passphrase.</p>
+				<form onsubmit={(e) => { e.preventDefault(); handleRecover(); }}>
+					<input type="url" bind:value={recoverUrl} placeholder="https://server-url" disabled={recoverLoading} />
+					<input type="password" bind:value={recoverPassphrase} placeholder="Your recovery passphrase" disabled={recoverLoading} />
+					{#if recoverError}
+						<p class="error">{recoverError}</p>
+					{/if}
+					<button type="submit" class="recover-btn" disabled={recoverLoading}>
+						{recoverLoading ? 'Recovering...' : 'Recover'}
+					</button>
+				</form>
+			{/if}
+		</div>
 
 		<p class="footer-note">
 			Don't have a server? Ask your community organizer, or
@@ -194,6 +241,59 @@
 	.server-url {
 		color: var(--text-muted);
 		font-size: 0.8rem;
+	}
+
+	.recover-section {
+		margin-top: 2rem;
+		padding-top: 1.5rem;
+		border-top: 1px solid var(--border);
+	}
+
+	.recover-toggle {
+		background: none;
+		color: var(--text-muted);
+		font-size: 0.85rem;
+		text-decoration: underline;
+	}
+
+	.recover-section h3 {
+		font-size: 1rem;
+		margin-bottom: 0.25rem;
+	}
+
+	.recover-hint {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		margin-bottom: 0.75rem;
+	}
+
+	.recover-section form {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.recover-section input {
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		padding: 0.6rem 0.8rem;
+		color: var(--text);
+		font-size: 0.9rem;
+	}
+
+	.recover-btn {
+		background: var(--bg-elevated);
+		color: var(--text);
+		border: 1px solid var(--border);
+		padding: 0.6rem;
+		border-radius: var(--radius);
+		font-weight: 600;
+	}
+
+	.recover-success {
+		color: var(--success);
+		font-weight: 600;
 	}
 
 	.footer-note {

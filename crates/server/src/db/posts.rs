@@ -104,6 +104,34 @@ pub async fn create(
     get(pool, id).await
 }
 
+pub async fn update(
+    pool: &PgPool,
+    id: Uuid,
+    title: Option<String>,
+    body: Option<String>,
+    urgency: Option<String>,
+    status: Option<String>,
+) -> Result<()> {
+    sqlx::query(
+        r#"UPDATE posts SET
+           title = COALESCE($2, title),
+           body = COALESCE($3, body),
+           urgency = COALESCE($4, urgency),
+           status = COALESCE($5, status),
+           updated_at = $6
+           WHERE id = $1"#
+    )
+    .bind(id)
+    .bind(title)
+    .bind(body)
+    .bind(urgency)
+    .bind(status)
+    .bind(Utc::now())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn withdraw(pool: &PgPool, id: Uuid) -> Result<()> {
     sqlx::query("UPDATE posts SET status = 'withdrawn', updated_at = $2 WHERE id = $1")
         .bind(id)

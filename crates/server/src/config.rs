@@ -11,6 +11,8 @@ pub struct Config {
     pub auth: AuthConfig,
     pub federation: FederationConfig,
     pub security: SecurityConfig,
+    pub posts: PostsConfig,
+    pub admin: AdminConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -72,6 +74,38 @@ pub struct SecurityConfig {
     pub allowed_origins: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct PostsConfig {
+    pub default_ttl_need_days: u32,
+    pub default_ttl_offer_days: u32,
+    pub default_ttl_resource_days: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AdminConfig {
+    pub superadmin_keys: Vec<String>,
+}
+
+impl Default for PostsConfig {
+    fn default() -> Self {
+        Self {
+            default_ttl_need_days: 7,
+            default_ttl_offer_days: 14,
+            default_ttl_resource_days: 0,
+        }
+    }
+}
+
+impl Default for AdminConfig {
+    fn default() -> Self {
+        Self {
+            superadmin_keys: Vec::new(),
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -82,6 +116,8 @@ impl Default for Config {
             auth: AuthConfig::default(),
             federation: FederationConfig::default(),
             security: SecurityConfig::default(),
+            posts: PostsConfig::default(),
+            admin: AdminConfig::default(),
         }
     }
 }

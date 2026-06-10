@@ -13,10 +13,24 @@
 	let title = $state('');
 	let body = $state('');
 	let urgency = $state('medium');
+	let expiresIn = $state('7');
 	let locationName = $state('');
 	let contactMethod = $state('');
 	let error = $state('');
 	let loading = $state(false);
+
+	const expiryDefaults: Record<string, string> = { need: '7', offer: '14', resource: '0' };
+
+	function setKind(k: string) {
+		kind = k;
+		expiresIn = expiryDefaults[k] || '7';
+	}
+
+	function getExpiresAt(): string | null {
+		const days = parseInt(expiresIn);
+		if (!days) return null;
+		return new Date(Date.now() + days * 86400000).toISOString();
+	}
 
 	onMount(async () => {
 		try {
@@ -40,6 +54,7 @@
 					title: title.trim(),
 					body: body.trim() || null,
 					urgency: kind === 'need' ? urgency : null,
+					expires_at: getExpiresAt(),
 					location_name: locationName.trim() || null,
 					contact_method: contactMethod.trim() || null,
 				});
@@ -69,9 +84,9 @@
 		<label>
 			<span>Type</span>
 			<div class="kind-selector">
-				<button type="button" class:active={kind === 'need'} onclick={() => kind = 'need'}>Need</button>
-				<button type="button" class:active={kind === 'offer'} onclick={() => kind = 'offer'}>Offer</button>
-				<button type="button" class:active={kind === 'resource'} onclick={() => kind = 'resource'}>Resource</button>
+				<button type="button" class:active={kind === 'need'} onclick={() => setKind('need')}>Need</button>
+				<button type="button" class:active={kind === 'offer'} onclick={() => setKind('offer')}>Offer</button>
+				<button type="button" class:active={kind === 'resource'} onclick={() => setKind('resource')}>Resource</button>
 			</div>
 		</label>
 
@@ -110,6 +125,18 @@
 				</select>
 			</label>
 		{/if}
+
+		<label>
+			<span>Expires in</span>
+			<select bind:value={expiresIn}>
+				<option value="1">1 day</option>
+				<option value="3">3 days</option>
+				<option value="7">1 week</option>
+				<option value="14">2 weeks</option>
+				<option value="30">1 month</option>
+				<option value="0">Never</option>
+			</select>
+		</label>
 
 		<label>
 			<span>Location (optional)</span>

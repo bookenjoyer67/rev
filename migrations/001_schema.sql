@@ -1,3 +1,16 @@
+CREATE TABLE users (
+    id UUID PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    public_key BYTEA NOT NULL UNIQUE,
+    encryption_public_key BYTEA,
+    encrypted_key_bundle BYTEA,
+    bundle_salt BYTEA,
+    recovery_id BYTEA UNIQUE,
+    role TEXT NOT NULL DEFAULT 'user',
+    last_seen TIMESTAMPTZ DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE communities (
     id UUID PRIMARY KEY,
     slug TEXT UNIQUE NOT NULL,
@@ -13,6 +26,7 @@ CREATE TABLE communities (
 CREATE TABLE members (
     id UUID PRIMARY KEY,
     community_id UUID NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id),
     display_name TEXT NOT NULL,
     public_key BYTEA NOT NULL,
     role TEXT NOT NULL DEFAULT 'member',
@@ -84,10 +98,40 @@ CREATE TABLE alliances (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE directory_entries (
+    url TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    location_name TEXT,
+    location_lat DOUBLE PRECISION,
+    location_lon DOUBLE PRECISION,
+    communities_count BIGINT DEFAULT 0,
+    version TEXT,
+    last_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+    registered_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE notifications (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT,
+    link TEXT,
+    read BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX idx_posts_community ON posts(community_id);
 CREATE INDEX idx_posts_kind ON posts(kind);
 CREATE INDEX idx_posts_status ON posts(status);
 CREATE INDEX idx_posts_category ON posts(category);
+CREATE INDEX idx_posts_expires ON posts(expires_at) WHERE expires_at IS NOT NULL AND status = 'active';
 CREATE INDEX idx_members_community ON members(community_id);
 CREATE INDEX idx_matches_post ON matches(post_id);
 CREATE INDEX idx_messages_match ON messages(match_id);
+CREATE INDEX idx_directory_location ON directory_entries(location_lat, location_lon)
+    WHERE location_lat IS NOT NULL AND location_lon IS NOT NULL;
+CREATE INDEX idx_notifications_user ON notifications(user_id);
+CREATE INDEX idx_notifications_unread ON notifications(user_id) WHERE read = false;
+CREATE INDEX idx_users_recovery ON users(recovery_id) WHERE recovery_id IS NOT NULL;

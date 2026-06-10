@@ -2,6 +2,9 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { auth } from '$lib/stores/auth';
+	import { getActiveServer } from '$lib/stores/server';
+	import RespondModal from '$lib/components/RespondModal.svelte';
 
 	interface Community { slug: string; name: string; description?: string; location_name?: string; }
 	interface Post {
@@ -13,6 +16,7 @@
 		location_name?: string;
 		urgency?: string;
 		status: string;
+		author_id: string;
 		created_at: string;
 	}
 
@@ -21,6 +25,44 @@
 	let filter = $state('all');
 	let loading = $state(true);
 	let error = $state('');
+	let respondingTo: Post | null = $state(null);
+	let editingId: string | null = $state(null);
+	let editTitle = $state('');
+	let editBody = $state('');
+
+	async function fulfillPost(postId: string) {
+		if (!community) return;
+		await api.posts.fulfill(community.slug, postId);
+		await loadPosts(community.slug);
+	}
+
+	async function deletePost(postId: string) {
+		if (!community || !confirm('Delete this post?')) return;
+		await api.posts.withdraw(community.slug, postId);
+		await loadPosts(community.slug);
+	}
+
+	function startEdit(post: Post) {
+		editingId = post.id;
+		editTitle = post.title;
+		editBody = post.body || '';
+	}
+
+	async function saveEdit() {
+		if (!community || !editingId) return;
+		await api.posts.update(community.slug, editingId, {
+			title: editTitle.trim(),
+			body: editBody.trim() || undefined,
+		});
+		editingId = null;
+		await loadPosts(community.slug);
+	}
+
+	let myUserId = $derived((() => {
+		const server = getActiveServer();
+		if (!server) return null;
+		return $auth.servers?.[server]?.userId || null;
+	})());
 
 	const kindLabels: Record<string, string> = { resource: 'Resource', need: 'Need', offer: 'Offer' };
 	const urgencyColors: Record<string, string> = { critical: 'var(--critical)', high: 'var(--warning)', medium: 'var(--text-muted)', low: 'var(--text-muted)' };
@@ -103,19 +145,54 @@
 							{/if}
 							<span class="time">{timeAgo(post.created_at)}</span>
 						</div>
+						{#if editingId === post.id}
+						<form class="edit-form" onsubmit={(e) => { e.preventDefault(); saveEdit(); }}>
+							<input type="text" bind:value={editTitle} placeholder="Title" />
+							<textarea bind:value={editBody} placeholder="Details" rows="2"></textarea>
+							<div class="edit-actions">
+								<button type="submit" class="save-btn">Save</button>
+								<button type="button" class="cancel-btn" onclick={() => editingId = null}>Cancel</button>
+							</div>
+						</form>
+					{:else}
 						<h3>{post.title}</h3>
 						{#if post.body}
 							<p class="body">{post.body}</p>
 						{/if}
-						{#if post.location_name}
-							<span class="loc">{post.location_name}</span>
-						{/if}
+					{/if}
+						<div class="post-footer">
+							{#if post.location_name}
+								<span class="loc">{post.location_name}</span>
+							{/if}
+							{#if post.author_id !== myUserId}
+								{#if post.kind === 'need'}
+									<button class="respond-btn" onclick={() => respondingTo = post}>I can help</button>
+								{:else if post.kind === 'offer'}
+									<button class="respond-btn" onclick={() => respondingTo = post}>Request this</button>
+								{/if}
+							{:else if post.status === 'fulfilled'}
+								<span class="fulfilled-badge">Fulfilled</span>
+							{:else}
+								<div class="author-actions">
+									<button class="action-btn fulfill" onclick={() => fulfillPost(post.id)}>Fulfill</button>
+									<button class="action-btn edit" onclick={() => startEdit(post)}>Edit</button>
+									<button class="action-btn delete" onclick={() => deletePost(post.id)}>Delete</button>
+								</div>
+							{/if}
+						</div>
 					</li>
 				{/each}
 			</ul>
 		{/if}
 	{/if}
 </div>
+
+{#if respondingTo && community}
+	<RespondModal
+		post={{ id: respondingTo.id, title: respondingTo.title, kind: respondingTo.kind, server_url: getActiveServer() || '', community_slug: community.slug, author_id: respondingTo.author_id }}
+		onClose={() => respondingTo = null}
+	/>
+{/if}
 
 <style>
 	.community-header {
@@ -204,6 +281,71 @@
 	h3 { font-size: 1.05rem; margin-bottom: 0.3rem; }
 	.body { color: var(--text-muted); font-size: 0.9rem; }
 	.loc { color: var(--text-muted); font-size: 0.8rem; }
+
+	.post-footer {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-top: 0.75rem;
+		padding-top: 0.75rem;
+		border-top: 1px solid var(--border);
+	}
+
+	.respond-btn {
+		background: var(--accent);
+		color: white;
+		padding: 0.4rem 0.8rem;
+		border-radius: var(--radius);
+		font-weight: 600;
+		font-size: 0.8rem;
+		margin-left: auto;
+	}
+
+	.author-actions {
+		display: flex;
+		gap: 0.4rem;
+		margin-left: auto;
+	}
+
+	.action-btn {
+		padding: 0.3rem 0.6rem;
+		border-radius: var(--radius);
+		font-size: 0.75rem;
+		font-weight: 600;
+		border: 1px solid;
+	}
+
+	.action-btn.fulfill { background: #2ec4b615; color: var(--success); border-color: var(--success); }
+	.action-btn.edit { background: var(--bg-elevated); color: var(--text-muted); border-color: var(--border); }
+	.action-btn.delete { background: #e6394610; color: var(--critical); border-color: var(--critical); }
+
+	.fulfilled-badge {
+		font-size: 0.75rem;
+		color: var(--success);
+		font-weight: 600;
+		margin-left: auto;
+	}
+
+	.edit-form {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		margin-bottom: 0.5rem;
+	}
+
+	.edit-form input, .edit-form textarea {
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		padding: 0.5rem;
+		color: var(--text);
+		font-size: 0.9rem;
+		font-family: inherit;
+	}
+
+	.edit-actions { display: flex; gap: 0.4rem; }
+	.save-btn { background: var(--accent); color: white; padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; font-weight: 600; }
+	.cancel-btn { background: var(--bg-elevated); color: var(--text-muted); padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; border: 1px solid var(--border); }
 
 	.status { text-align: center; color: var(--text-muted); padding: 3rem 0; }
 	.error { color: var(--critical); }
