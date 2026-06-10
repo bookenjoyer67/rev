@@ -2,6 +2,7 @@ mod api;
 pub mod auth;
 pub mod config;
 mod db;
+mod relay_bridge;
 mod repl;
 mod tasks;
 
@@ -54,6 +55,11 @@ async fn main() {
     };
 
     tasks::spawn_background_tasks(state.clone());
+
+    if config.relay.enabled {
+        let relay_config = config.relay.clone();
+        tokio::spawn(relay_bridge::spawn_relay(relay_config));
+    }
 
     let mut app = Router::new()
         .nest("/api", api::router(state.clone()))

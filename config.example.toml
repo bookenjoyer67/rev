@@ -60,6 +60,17 @@ max_messages_per_hour = 200
 # CORS allowed origins ("*" = any Komun frontend can connect)
 allowed_origins = "*"
 
+[relay]
+# piggPin map relay — enables community maps
+enabled = false
+# Port for the WebSocket relay (separate from the API port)
+port = 9001
+bind_address = "0.0.0.0"
+# Where to persist encrypted map data
+storage_path = "data/relay"
+# Maximum connected peers per map room
+max_clients_per_room = 100
+
 [posts]
 # Default time-to-live for posts by kind (days, 0 = never expires)
 default_ttl_need_days = 7

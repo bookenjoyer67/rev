@@ -13,6 +13,29 @@ pub struct Config {
     pub security: SecurityConfig,
     pub posts: PostsConfig,
     pub admin: AdminConfig,
+    pub relay: RelayConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct RelayConfig {
+    pub enabled: bool,
+    pub port: u16,
+    pub bind_address: String,
+    pub storage_path: String,
+    pub max_clients_per_room: usize,
+}
+
+impl Default for RelayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: 9001,
+            bind_address: "0.0.0.0".into(),
+            storage_path: "data/relay".into(),
+            max_clients_per_room: 100,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -118,6 +141,7 @@ impl Default for Config {
             security: SecurityConfig::default(),
             posts: PostsConfig::default(),
             admin: AdminConfig::default(),
+            relay: RelayConfig::default(),
         }
     }
 }

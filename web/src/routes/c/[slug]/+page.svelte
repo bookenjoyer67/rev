@@ -153,6 +153,7 @@
 				{/if}
 			</div>
 			<div class="header-actions">
+				<a href="/c/{community.slug}/map" class="btn-map">Map</a>
 				{#if community.is_member}
 					<a href="/aid/new" class="btn-post">Post</a>
 				{/if}
@@ -283,6 +284,18 @@
 	.location { color: var(--text-muted); font-size: 0.8rem; }
 
 	.header-actions { display: flex; gap: 0.5rem; }
+
+	.btn-map {
+		background: #6366f120;
+		color: #818cf8;
+		padding: 0.5rem 1rem;
+		border-radius: var(--radius);
+		font-weight: 600;
+		font-size: 0.9rem;
+		border: 1px solid #818cf8;
+	}
+
+	.btn-map:hover { text-decoration: none; }
 
 	.btn-settings {
 		background: var(--bg-elevated);

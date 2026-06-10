@@ -1,0 +1,45 @@
+[package]
+name = "komun-relay"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+mqtt-bridge = ["dep:rumqttc", "dep:meshtastic_protobufs", "dep:prost"]
+rnode-bridge = ["dep:serialport"]
+reticulum-bridge = ["dep:reticulum-rs-core", "dep:reticulum-rs-transport"]
+peer-relay = []
+tls = ["dep:rustls", "dep:rustls-pemfile", "dep:tokio-rustls"]
+hot-reload = ["dep:notify"]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+hex = "0.4"
+getrandom = "0.2"
+web-push = { version = "0.11", default-features = false, features = ["hyper-client"] }
+p256 = { version = "0.13", features = ["pem"] }
+rand_core = "0.6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ed25519-dalek = "2"
+pbkdf2 = "0.12"
+socket2 = "0.5"
+dashmap = "6"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+rustls = { version = "0.23", optional = true }
+rustls-pemfile = { version = "2", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+notify = { version = "7", optional = true }
+rumqttc = { version = "0.25", optional = true }
+meshtastic_protobufs = { version = "2.7", optional = true }
+prost = { version = "0.13", optional = true }
+serialport = { version = "4.6", optional = true }
+reticulum-rs-core = { version = "0.2", optional = true }
+reticulum-rs-transport = { version = "0.2", optional = true }
