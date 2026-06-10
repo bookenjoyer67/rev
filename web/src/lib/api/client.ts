@@ -40,8 +40,13 @@ async function requestOn<T>(base: string, path: string, options?: RequestInit & 
 export const api = {
 	communities: {
 		list: () => request<any[]>('/communities'),
-		get: (slug: string) => request<any>(`/communities/${slug}`),
+		get: (slug: string) => request<any>(`/communities/${slug}`, { auth: true }),
 		members: (slug: string) => request<any[]>(`/communities/${slug}/members`),
+		update: (slug: string, data: { name?: string; description?: string; visibility?: string }) =>
+			request<any>(`/communities/${slug}`, { method: 'PATCH', body: JSON.stringify(data), auth: true }),
+		listInvites: (slug: string) => request<any[]>(`/communities/${slug}/invites`, { auth: true }),
+		deleteInvite: (slug: string, code: string) =>
+			request<any>(`/communities/${slug}/invites/${code}`, { method: 'DELETE', auth: true }),
 		create: (data: { name: string; slug: string; description?: string; location_name?: string }) =>
 			request<any>('/communities', {
 				method: 'POST',

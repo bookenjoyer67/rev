@@ -122,6 +122,75 @@ pub async fn add_member(pool: &PgPool, community_id: Uuid, user_id: Uuid, role: 
     Ok(())
 }
 
+pub async fn update_community(
+    pool: &PgPool,
+    slug: &str,
+    name: Option<String>,
+    description: Option<String>,
+    visibility: Option<String>,
+) -> Result<()> {
+    sqlx::query(
+        r#"UPDATE communities SET
+           name = COALESCE($2, name),
+           description = COALESCE($3, description),
+           visibility = COALESCE($4, visibility)
+           WHERE slug = $1"#
+    )
+    .bind(slug)
+    .bind(name)
+    .bind(description)
+    .bind(visibility)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn list_invites(pool: &PgPool, community_id: Uuid) -> Result<Vec<Invite>> {
+    let rows = sqlx::query_as::<_, InviteRow>(
+        "SELECT code, community_id, created_by, uses_remaining, expires_at, created_at FROM invites WHERE community_id = $1 ORDER BY created_at DESC"
+    )
+    .bind(community_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| Invite {
+        code: r.code,
+        community_id: r.community_id,
+        created_by: r.created_by,
+        uses_remaining: r.uses_remaining,
+        expires_at: r.expires_at,
+        created_at: r.created_at,
+    }).collect())
+}
+
+pub async fn delete_invite(pool: &PgPool, code: &str) -> Result<()> {
+    sqlx::query("DELETE FROM invites WHERE code = $1")
+        .bind(code)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_member_role(pool: &PgPool, community_id: Uuid, user_id: Uuid) -> Result<Option<String>> {
+    let role = sqlx::query_scalar::<_, String>(
+        "SELECT role FROM members WHERE community_id = $1 AND user_id = $2"
+    )
+    .bind(community_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(role)
+}
+
+#[derive(FromRow)]
+struct InviteRow {
+    code: String,
+    community_id: Uuid,
+    created_by: Uuid,
+    uses_remaining: Option<i32>,
+    expires_at: Option<chrono::DateTime<Utc>>,
+    created_at: chrono::DateTime<Utc>,
+}
+
 fn generate_invite_code() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();

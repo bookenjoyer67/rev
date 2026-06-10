@@ -6,7 +6,9 @@
 	import { getActiveServer } from '$lib/stores/server';
 	import RespondModal from '$lib/components/RespondModal.svelte';
 
-	interface Community { slug: string; name: string; description?: string; location_name?: string; }
+	import { requireAuth } from '$lib/stores/auth';
+
+	interface Community { slug: string; name: string; description?: string; location_name?: string; is_member: boolean; member_role?: string; }
 	interface Post {
 		id: string;
 		kind: 'resource' | 'need' | 'offer';
@@ -34,6 +36,24 @@
 	let editingId: string | null = $state(null);
 	let editTitle = $state('');
 	let editBody = $state('');
+	let inviteCode = $state('');
+	let joining = $state(false);
+	let joinError = $state('');
+
+	async function joinCommunity() {
+		requireAuth(async () => {
+			if (!community) return;
+			joining = true;
+			joinError = '';
+			try {
+				await api.communities.join(community.slug, inviteCode.trim());
+				await load(community.slug);
+			} catch (e: any) {
+				joinError = e.message || 'Failed to join';
+			}
+			joining = false;
+		});
+	}
 
 	async function fulfillPost(postId: string) {
 		if (!community) return;
@@ -132,8 +152,28 @@
 					<span class="location">{community.location_name}</span>
 				{/if}
 			</div>
-			<a href="/aid/new" class="btn-post">Post</a>
+			<div class="header-actions">
+				{#if community.is_member}
+					<a href="/aid/new" class="btn-post">Post</a>
+				{/if}
+				{#if community.member_role === 'admin'}
+					<a href="/c/{community.slug}/settings" class="btn-settings">Settings</a>
+				{/if}
+			</div>
 		</header>
+
+		{#if !community.is_member}
+			<div class="join-banner">
+				<p>Join this community to post and participate.</p>
+				<div class="join-form">
+					<input type="text" bind:value={inviteCode} placeholder="Invite code (if required)" />
+					<button class="join-btn" onclick={joinCommunity} disabled={joining}>
+						{joining ? 'Joining...' : 'Join'}
+					</button>
+				</div>
+				{#if joinError}<p class="join-error">{joinError}</p>{/if}
+			</div>
+		{/if}
 
 		<form class="search-bar" onsubmit={(e) => { e.preventDefault(); handleSearch(); }}>
 			<input type="text" bind:value={searchQuery} placeholder="Search posts..." />
@@ -241,6 +281,36 @@
 	h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
 	.desc { color: var(--text-muted); font-size: 0.9rem; }
 	.location { color: var(--text-muted); font-size: 0.8rem; }
+
+	.header-actions { display: flex; gap: 0.5rem; }
+
+	.btn-settings {
+		background: var(--bg-elevated);
+		color: var(--text);
+		padding: 0.5rem 1rem;
+		border-radius: var(--radius);
+		font-weight: 600;
+		font-size: 0.9rem;
+		border: 1px solid var(--border);
+	}
+
+	.btn-settings:hover { text-decoration: none; border-color: var(--accent); }
+
+	.join-banner {
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		padding: 1rem;
+		margin-bottom: 1.5rem;
+	}
+
+	.join-banner p { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.75rem; }
+
+	.join-form { display: flex; gap: 0.5rem; }
+	.join-form input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.75rem; color: var(--text); font-size: 0.9rem; }
+	.join-btn { background: var(--accent); color: white; padding: 0.5rem 1rem; border-radius: var(--radius); font-weight: 600; font-size: 0.9rem; }
+	.join-btn:disabled { opacity: 0.6; }
+	.join-error { color: var(--critical); font-size: 0.8rem; margin-top: 0.5rem; }
 
 	.search-bar {
 		display: flex;

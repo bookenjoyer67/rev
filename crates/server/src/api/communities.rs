@@ -1,12 +1,14 @@
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Request, State},
+    http::header,
     middleware,
-    routing::{get, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
+use serde::Serialize;
 
 use komun_core::models::{Community, CreateCommunity, Invite};
-use crate::auth::{require_auth, AuthUser};
+use crate::auth::{require_auth, verify_token, AuthUser};
 use crate::AppState;
 
 pub fn router(state: AppState) -> Router {
@@ -17,11 +19,22 @@ pub fn router(state: AppState) -> Router {
 
     let protected = Router::new()
         .route("/", post(create_community))
+        .route("/{slug}", patch(update_community))
         .route("/{slug}/invite", post(create_invite))
+        .route("/{slug}/invites", get(list_invites))
+        .route("/{slug}/invites/{code}", delete(delete_invite))
         .route("/{slug}/join", post(join_community))
         .layer(middleware::from_fn(require_auth));
 
     public.merge(protected).with_state(state)
+}
+
+#[derive(Serialize)]
+struct CommunityResponse {
+    #[serde(flatten)]
+    community: Community,
+    is_member: bool,
+    member_role: Option<String>,
 }
 
 async fn list_communities(
@@ -34,9 +47,27 @@ async fn list_communities(
 async fn get_community(
     State(state): State<AppState>,
     Path(slug): Path<String>,
-) -> Result<Json<Community>, StatusError> {
+    request: Request,
+) -> Result<Json<CommunityResponse>, StatusError> {
     let community = crate::db::communities::get_by_slug(&state.pool, &slug).await?;
-    Ok(Json(community))
+
+    let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_default();
+    let user_id = request.headers().get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .and_then(|token| verify_token(&jwt_secret, token));
+
+    let member_role = if let Some(uid) = user_id {
+        crate::db::communities::get_member_role(&state.pool, community.id, uid).await.ok().flatten()
+    } else {
+        None
+    };
+
+    Ok(Json(CommunityResponse {
+        is_member: member_role.is_some(),
+        member_role,
+        community,
+    }))
 }
 
 async fn create_community(
@@ -49,26 +80,68 @@ async fn create_community(
     Ok(Json(community))
 }
 
+async fn update_community(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(slug): Path<String>,
+    Json(input): Json<UpdateCommunityRequest>,
+) -> Result<Json<serde_json::Value>, StatusError> {
+    let community = crate::db::communities::get_by_slug(&state.pool, &slug).await?;
+    let role = crate::db::communities::get_member_role(&state.pool, community.id, auth.user_id).await?;
+    if role.as_deref() != Some("admin") {
+        return Ok(Json(serde_json::json!({"error": "admin access required"})));
+    }
+    crate::db::communities::update_community(&state.pool, &slug, input.name, input.description, input.visibility).await?;
+    Ok(Json(serde_json::json!({"status": "updated"})))
+}
+
+#[derive(serde::Deserialize)]
+struct UpdateCommunityRequest {
+    name: Option<String>,
+    description: Option<String>,
+    visibility: Option<String>,
+}
+
 async fn create_invite(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
     Path(slug): Path<String>,
 ) -> Result<Json<Invite>, StatusError> {
     let community = crate::db::communities::get_by_slug(&state.pool, &slug).await?;
+    let role = crate::db::communities::get_member_role(&state.pool, community.id, auth.user_id).await?;
+    if role.as_deref() != Some("admin") {
+        return Err(anyhow::anyhow!("admin access required").into());
+    }
     let invite = crate::db::communities::create_invite(&state.pool, community.id, auth.user_id).await?;
     Ok(Json(invite))
 }
 
-async fn join_community(
+async fn list_invites(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
     Path(slug): Path<String>,
-    Json(payload): Json<JoinPayload>,
+) -> Result<Json<Vec<Invite>>, StatusError> {
+    let community = crate::db::communities::get_by_slug(&state.pool, &slug).await?;
+    let role = crate::db::communities::get_member_role(&state.pool, community.id, auth.user_id).await?;
+    if role.as_deref() != Some("admin") {
+        return Err(anyhow::anyhow!("admin access required").into());
+    }
+    let invites = crate::db::communities::list_invites(&state.pool, community.id).await?;
+    Ok(Json(invites))
+}
+
+async fn delete_invite(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path((slug, code)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusError> {
     let community = crate::db::communities::get_by_slug(&state.pool, &slug).await?;
-    crate::db::communities::use_invite(&state.pool, &payload.code).await?;
-    crate::db::communities::add_member(&state.pool, community.id, auth.user_id, "member").await?;
-    Ok(Json(serde_json::json!({"status": "joined"})))
+    let role = crate::db::communities::get_member_role(&state.pool, community.id, auth.user_id).await?;
+    if role.as_deref() != Some("admin") {
+        return Err(anyhow::anyhow!("admin access required").into());
+    }
+    crate::db::communities::delete_invite(&state.pool, &code).await?;
+    Ok(Json(serde_json::json!({"status": "deleted"})))
 }
 
 #[derive(serde::Serialize, sqlx::FromRow)]
@@ -90,6 +163,30 @@ async fn list_members(
     .fetch_all(&state.pool)
     .await?;
     Ok(Json(members))
+}
+
+async fn join_community(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(slug): Path<String>,
+    Json(payload): Json<JoinPayload>,
+) -> Result<Json<serde_json::Value>, StatusError> {
+    let community = crate::db::communities::get_by_slug(&state.pool, &slug).await?;
+
+    let has_invites: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invites WHERE community_id = $1")
+        .bind(community.id)
+        .fetch_one(&state.pool)
+        .await?;
+
+    if has_invites > 0 {
+        if payload.code.is_empty() {
+            return Err(anyhow::anyhow!("this community requires an invite code").into());
+        }
+        crate::db::communities::use_invite(&state.pool, &payload.code).await?;
+    }
+
+    crate::db::communities::add_member(&state.pool, community.id, auth.user_id, "member").await?;
+    Ok(Json(serde_json::json!({"status": "joined"})))
 }
 
 #[derive(serde::Deserialize)]

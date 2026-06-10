@@ -1,0 +1,150 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
+	import { isConnected } from '$lib/stores/server';
+	import { isAuthenticated } from '$lib/stores/auth';
+	import { api } from '$lib/api/client';
+
+	interface Invite { code: string; uses_remaining?: number; expires_at?: string; created_at: string; }
+
+	let name = $state('');
+	let description = $state('');
+	let visibility = $state('federated');
+	let invites: Invite[] = $state([]);
+	let loading = $state(true);
+	let saving = $state(false);
+	let saved = $state(false);
+	let error = $state('');
+	let slug = $state('');
+
+	onMount(async () => {
+		if (!isConnected() || !isAuthenticated()) { goto('/'); return; }
+		slug = $page.params.slug as string;
+		try {
+			const community = await api.communities.get(slug);
+			if (community.member_role !== 'admin') { goto(`/c/${slug}`); return; }
+			name = community.name;
+			description = community.description || '';
+			visibility = community.visibility;
+			invites = await api.communities.listInvites(slug);
+		} catch { goto(`/c/${slug}`); }
+		loading = false;
+	});
+
+	async function save() {
+		saving = true;
+		error = '';
+		try {
+			await api.communities.update(slug, { name: name.trim(), description: description.trim() || undefined, visibility });
+			saved = true;
+			setTimeout(() => saved = false, 2000);
+		} catch (e: any) { error = e.message; }
+		saving = false;
+	}
+
+	async function createInvite() {
+		try {
+			const invite = await api.communities.createInvite(slug);
+			invites = [invite, ...invites];
+		} catch (e: any) { error = e.message; }
+	}
+
+	async function removeInvite(code: string) {
+		await api.communities.deleteInvite(slug, code);
+		invites = invites.filter(i => i.code !== code);
+	}
+
+	function copyCode(code: string) {
+		navigator.clipboard.writeText(code);
+	}
+</script>
+
+<div class="container">
+	{#if loading}
+		<p class="status">Loading...</p>
+	{:else}
+		<header class="page-header">
+			<a href="/c/{slug}" class="back">&larr; Back</a>
+			<h1>Community Settings</h1>
+		</header>
+
+		<form onsubmit={(e) => { e.preventDefault(); save(); }}>
+			<label>
+				<span>Name</span>
+				<input type="text" bind:value={name} maxlength="100" />
+			</label>
+			<label>
+				<span>Description</span>
+				<textarea bind:value={description} rows="3"></textarea>
+			</label>
+			<label>
+				<span>Visibility</span>
+				<select bind:value={visibility}>
+					<option value="public">Public</option>
+					<option value="federated">Federated</option>
+					<option value="private">Private</option>
+				</select>
+			</label>
+			{#if error}<p class="error">{error}</p>{/if}
+			<button type="submit" class="save-btn" disabled={saving}>
+				{saving ? 'Saving...' : saved ? 'Saved!' : 'Save Changes'}
+			</button>
+		</form>
+
+		<section class="invites">
+			<div class="invite-header">
+				<h2>Invite Codes</h2>
+				<button class="create-btn" onclick={createInvite}>Create Code</button>
+			</div>
+			<p class="hint">When invite codes exist, new members must use one to join.</p>
+			{#if invites.length === 0}
+				<p class="empty">No invite codes. Community is open to everyone.</p>
+			{:else}
+				<ul>
+					{#each invites as invite}
+						<li>
+							<code>{invite.code}</code>
+							<div class="invite-actions">
+								<button class="copy-btn" onclick={() => copyCode(invite.code)}>Copy</button>
+								<button class="remove-btn" onclick={() => removeInvite(invite.code)}>Remove</button>
+							</div>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+	{/if}
+</div>
+
+<style>
+	.page-header { margin-bottom: 1.5rem; }
+	.back { color: var(--text-muted); font-size: 0.8rem; }
+	h1 { font-size: 1.5rem; margin-top: 0.25rem; }
+
+	form { display: flex; flex-direction: column; gap: 1rem; max-width: 500px; margin-bottom: 2rem; }
+	label { display: flex; flex-direction: column; gap: 0.3rem; }
+	label span { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); }
+	input, textarea, select { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem; color: var(--text); font-size: 1rem; font-family: inherit; }
+	input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+
+	.save-btn { background: var(--accent); color: white; padding: 0.75rem; border-radius: var(--radius); font-weight: 600; }
+	.save-btn:disabled { opacity: 0.6; }
+
+	.invites { border-top: 1px solid var(--border); padding-top: 1.5rem; }
+	.invite-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+	h2 { font-size: 1.2rem; }
+	.create-btn { background: var(--success); color: white; padding: 0.4rem 0.8rem; border-radius: var(--radius); font-weight: 600; font-size: 0.85rem; }
+	.hint { color: var(--text-muted); font-size: 0.8rem; margin-bottom: 1rem; }
+	.empty { color: var(--text-muted); font-size: 0.85rem; }
+
+	ul { list-style: none; }
+	li { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.8rem; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 0.4rem; }
+	code { font-size: 1.1rem; font-weight: 600; letter-spacing: 1px; }
+	.invite-actions { display: flex; gap: 0.4rem; }
+	.copy-btn { background: var(--bg-elevated); color: var(--text); padding: 0.3rem 0.6rem; border-radius: var(--radius); font-size: 0.8rem; border: 1px solid var(--border); }
+	.remove-btn { background: none; color: var(--critical); padding: 0.3rem 0.6rem; border-radius: var(--radius); font-size: 0.8rem; border: 1px solid var(--critical); }
+
+	.error { color: var(--critical); font-size: 0.85rem; }
+	.status { text-align: center; color: var(--text-muted); padding: 3rem 0; }
+</style>
