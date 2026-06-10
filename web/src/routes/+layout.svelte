@@ -90,7 +90,7 @@
 			{/if}
 			<a href="/connect" onclick={closeMenu}>Connect</a>
 			{#if $serverState.active && $auth.servers?.[$serverState.active]}
-				<span class="identity">{$auth.servers[$serverState.active].displayName}</span>
+				<a href="/account" class="identity" onclick={closeMenu}>{$auth.servers[$serverState.active].displayName}</a>
 			{/if}
 		</div>
 	</nav>
@@ -224,12 +224,17 @@
 	}
 
 	.identity {
-		color: var(--success);
+		color: var(--success) !important;
 		font-size: 0.85rem;
 		font-weight: 600;
 		padding: 0.25rem 0.6rem;
 		background: #2ec4b615;
 		border-radius: var(--radius);
+	}
+
+	.identity:hover {
+		text-decoration: none !important;
+		background: #2ec4b625;
 	}
 
 	main {

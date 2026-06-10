@@ -195,6 +195,73 @@ export async function recover(serverUrl: string, passphrase: string): Promise<bo
 	}
 }
 
+export async function setPassphrase(passphrase: string): Promise<boolean> {
+	const server = getActiveServer();
+	if (!server) return false;
+	const state = get(auth);
+	if (!state.keypair) return false;
+
+	try {
+		const bundle = await createKeyBundle(
+			state.keypair.ed25519SecretKey,
+			state.keypair.x25519SecretKey,
+			passphrase
+		);
+
+		const res = await fetch(`${server}/api/auth/register`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'Authorization': `Bearer ${getToken()}`,
+			},
+			body: JSON.stringify({
+				display_name: getActiveAuth()?.displayName,
+				public_key: state.keypair.ed25519PublicKey,
+				encryption_public_key: state.keypair.x25519PublicKey,
+				encrypted_key_bundle: bundle.encryptedBundle,
+				bundle_salt: bundle.salt,
+				recovery_id: bundle.recoveryId,
+			}),
+		});
+
+		return res.ok;
+	} catch {
+		return false;
+	}
+}
+
+export async function updateDisplayName(newName: string): Promise<boolean> {
+	const server = getActiveServer();
+	if (!server) return false;
+	const state = get(auth);
+	if (!state.keypair) return false;
+
+	try {
+		const res = await fetch(`${server}/api/auth/register`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				display_name: newName,
+				public_key: state.keypair.ed25519PublicKey,
+				encryption_public_key: state.keypair.x25519PublicKey,
+			}),
+		});
+
+		if (!res.ok) return false;
+		const data = await res.json();
+		auth.update((s) => ({
+			...s,
+			servers: {
+				...s.servers,
+				[server]: { ...s.servers[server], displayName: data.display_name },
+			},
+		}));
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 export async function refreshRole(): Promise<void> {
 	const server = getActiveServer();
 	const token = getToken();
