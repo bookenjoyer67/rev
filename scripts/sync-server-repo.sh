@@ -12,6 +12,7 @@ echo "Syncing server code to $TARGET..."
 
 rsync -av --delete --exclude='target/' crates/server/ "$TARGET/crates/server/"
 rsync -av --delete --exclude='target/' crates/core/ "$TARGET/crates/core/"
+rsync -av --delete --exclude='target/' crates/relay/ "$TARGET/crates/relay/"
 rsync -av --delete migrations/ "$TARGET/migrations/"
 cp config.example.toml "$TARGET/config.example.toml"
 
