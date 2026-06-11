@@ -7,6 +7,7 @@ mod relay_ops;
 mod repl;
 mod tasks;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
