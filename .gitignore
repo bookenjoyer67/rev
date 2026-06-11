@@ -9,3 +9,4 @@ config.toml
 *.swp
 *.swo
 dist/
+data/relay/

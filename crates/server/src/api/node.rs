@@ -12,6 +12,7 @@ struct NodeInfo {
     communities_count: i64,
     listed: bool,
     federation_enabled: bool,
+    relay_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -54,5 +55,6 @@ async fn get_node_info(State(state): State<AppState>) -> Json<NodeInfo> {
         communities_count,
         listed: config.discovery.listed,
         federation_enabled: config.federation.enabled,
+        relay_url: config.relay.external_url.clone(),
     })
 }

@@ -28,11 +28,12 @@
 		slug = $page.params.slug as string;
 		const server = getActiveServer();
 		if (server) {
-			const wsUrl = server.replace('https://', 'wss://').replace('http://', 'ws://');
-			relayUrl = wsUrl.replace(/:\d+/, ':9001');
-			if (!relayUrl.includes(':9001')) {
-				relayUrl = wsUrl + ':9001';
-			}
+			try {
+				const nodeInfo = await fetch(`${server}/api/node`).then(r => r.json());
+				if (nodeInfo.relay_url) {
+					relayUrl = nodeInfo.relay_url;
+				}
+			} catch (_) {}
 		}
 
 		try {

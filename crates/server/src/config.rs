@@ -24,6 +24,7 @@ pub struct RelayConfig {
     pub bind_address: String,
     pub storage_path: String,
     pub max_clients_per_room: usize,
+    pub external_url: Option<String>,
 }
 
 impl Default for RelayConfig {
@@ -34,6 +35,7 @@ impl Default for RelayConfig {
             bind_address: "0.0.0.0".into(),
             storage_path: "data/relay".into(),
             max_clients_per_room: 100,
+            external_url: None,
         }
     }
 }
