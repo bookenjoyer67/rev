@@ -35,7 +35,6 @@ struct CommunityResponse {
     community: Community,
     is_member: bool,
     member_role: Option<String>,
-    map_secret_key: Option<String>,
 }
 
 async fn list_communities(
@@ -64,17 +63,10 @@ async fn get_community(
         None
     };
 
-    let map_secret_key = if member_role.is_some() {
-        crate::db::communities::get_map_secret_key(&state.pool, &slug).await.ok().flatten()
-    } else {
-        None
-    };
-
     Ok(Json(CommunityResponse {
         is_member: member_role.is_some(),
         member_role,
         community,
-        map_secret_key,
     }))
 }
 
@@ -90,31 +82,28 @@ async fn create_community(
         komun_core::models::Visibility::Private => "private",
     };
 
-    let (map_community_id, map_secret_key) = if let Some(ref store) = state.relay_store {
+    let map_community_id = if let Some(ref store) = state.relay_store {
         match crate::relay_ops::create_relay_community(
             store,
             &input.name,
             &description,
             visibility_str,
         ).await {
-            Ok((cid, sk)) => {
-                let mid = uuid::Uuid::parse_str(&cid).ok();
-                (mid, Some(sk))
-            }
+            Ok(cid) => uuid::Uuid::parse_str(&cid).ok(),
             Err(e) => {
                 tracing::warn!("relay community creation failed: {}", e);
-                (None, None)
+                None
             }
         }
     } else {
-        (None, None)
+        None
     };
 
     let community = crate::db::communities::create(
         &state.pool,
         input,
         map_community_id,
-        map_secret_key.as_deref().map(|s| s.as_bytes()),
+        None,
     ).await?;
     crate::db::communities::add_member(&state.pool, community.id, auth.user_id, "admin").await?;
     Ok(Json(community))

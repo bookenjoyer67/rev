@@ -11,7 +11,6 @@
 	let serverLat: number | null = $state(null);
 	let serverLon: number | null = $state(null);
 	let mapCommunityId: string | null = $state(null);
-	let mapSecretKey: string | null = $state(null);
 	let communityName: string | null = $state(null);
 	let iframeSrc: string | null = $state(null);
 	let loading = $state(true);
@@ -47,9 +46,6 @@
 			if (community.map_community_id) {
 				mapCommunityId = community.map_community_id;
 				communityName = community.name;
-				if (community.map_secret_key) {
-					mapSecretKey = community.map_secret_key;
-				}
 				const payload: Record<string, string> = {
 					cid: community.map_community_id,
 					n: community.name,
@@ -78,14 +74,7 @@
 		const msg = event.data;
 		if (msg?.type === 'piggpin:ready' && displayName) {
 			const iframe = document.querySelector('iframe');
-			const data: any = {
-				type: 'komun:identity',
-				displayName,
-			};
-			if (mapSecretKey) {
-				data.communityPassword = mapSecretKey;
-			}
-			iframe?.contentWindow?.postMessage(data, 'https://app.piggpin.space');
+			iframe?.contentWindow?.postMessage({ type: 'komun:identity', displayName }, 'https://app.piggpin.space');
 		}
 	}
 </script>

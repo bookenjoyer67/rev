@@ -27,19 +27,6 @@ pub async fn get_by_slug(pool: &PgPool, slug: &str) -> Result<Community> {
     Ok(row.into())
 }
 
-pub async fn get_map_secret_key(pool: &PgPool, slug: &str) -> Result<Option<String>> {
-    let row = sqlx::query(
-        "SELECT map_secret_key FROM communities WHERE slug = $1"
-    )
-    .bind(slug)
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.and_then(|r| {
-        let bytes: Option<Vec<u8>> = r.get("map_secret_key");
-        bytes.map(|b| String::from_utf8_lossy(&b).to_string())
-    }))
-}
-
 pub async fn create(pool: &PgPool, input: CreateCommunity, map_community_id: Option<Uuid>, map_secret_key: Option<&[u8]>) -> Result<Community> {
     let id = Uuid::now_v7();
     let visibility = match input.visibility.unwrap_or(Visibility::Federated) {
@@ -243,7 +230,6 @@ impl From<CommunityRow> for Community {
                 _ => Visibility::Federated,
             },
             map_community_id: r.map_community_id,
-            map_secret_key: None,
             created_at: r.created_at,
         }
     }

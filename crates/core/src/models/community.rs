@@ -23,8 +23,6 @@ pub struct Community {
     pub created_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub map_community_id: Option<Uuid>,
-    #[serde(skip_serializing)]
-    pub map_secret_key: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
