@@ -84,7 +84,12 @@ async fn main() {
 
     if let Some(ref static_dir) = config.server.static_dir {
         if !static_dir.is_empty() {
-            app = app.fallback_service(ServeDir::new(static_dir));
+            app = app.fallback_service(
+                ServeDir::new(static_dir)
+                    .not_found_service(tower_http::services::ServeFile::new(
+                        PathBuf::from(static_dir).join("index.html"),
+                    )),
+            );
         }
     }
 
