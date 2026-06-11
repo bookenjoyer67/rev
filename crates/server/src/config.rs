@@ -45,7 +45,6 @@ impl Default for RelayConfig {
 pub struct ServerConfig {
     pub bind_address: String,
     pub port: u16,
-    pub static_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -153,7 +152,6 @@ impl Default for ServerConfig {
         Self {
             bind_address: "0.0.0.0".into(),
             port: 3000,
-            static_dir: Some("web/build".into()),
         }
     }
 }

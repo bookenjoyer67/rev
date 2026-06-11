@@ -7,7 +7,6 @@ mod relay_ops;
 mod repl;
 mod tasks;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
@@ -15,7 +14,6 @@ use config::Config;
 use sqlx::postgres::PgPoolOptions;
 use tower_http::{
     cors::CorsLayer,
-    services::ServeDir,
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -77,21 +75,10 @@ async fn main() {
 
     tasks::spawn_background_tasks(state.clone());
 
-    let mut app = Router::new()
+    let app = Router::new()
         .nest("/api", api::router(state.clone()))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
-
-    if let Some(ref static_dir) = config.server.static_dir {
-        if !static_dir.is_empty() {
-            app = app.fallback_service(
-                ServeDir::new(static_dir)
-                    .not_found_service(tower_http::services::ServeFile::new(
-                        PathBuf::from(static_dir).join("index.html"),
-                    )),
-            );
-        }
-    }
 
     let bind = config.bind_addr();
     let listener = tokio::net::TcpListener::bind(&bind).await.unwrap();
