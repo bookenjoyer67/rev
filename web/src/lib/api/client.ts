@@ -9,6 +9,7 @@ function getBase(): string {
 
 async function request<T>(path: string, options?: RequestInit & { auth?: boolean }): Promise<T> {
 	const base = getBase();
+	console.log('[api]', options?.method || 'GET', path);
 	return requestOn<T>(base, path, options);
 }
 
@@ -31,6 +32,7 @@ async function requestOn<T>(base: string, path: string, options?: RequestInit & 
 
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
+		console.error('[api] error:', res.status, path, err.error || res.statusText);
 		throw new Error(err.error || 'Request failed');
 	}
 

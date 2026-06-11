@@ -63,9 +63,6 @@
 					payload.lon = String(lon);
 					payload.zoom = '15';
 				}
-				if (community.map_secret_key) {
-					payload.sk = community.map_secret_key;
-				}
 				const b64 = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 				iframeSrc = `https://app.piggpin.space/?embed=1#community=${b64}`;
 			}
