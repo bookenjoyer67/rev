@@ -82,10 +82,6 @@
 
 	function handlePickMessage(event: MessageEvent) {
 		if (event.origin !== 'https://app.piggpin.space') return;
-		if (event.data?.type === 'piggpin:ready') {
-			const iframe = document.querySelector('.map-picker iframe') as HTMLIFrameElement | null;
-			iframe?.contentWindow?.postMessage({ type: 'piggpin:pick-location' }, 'https://app.piggpin.space');
-		}
 		if (event.data?.type === 'piggpin:location-picked') {
 			locationLat = event.data.lat;
 			locationLon = event.data.lng;
