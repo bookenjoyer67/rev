@@ -23,7 +23,7 @@ pub struct AppState {
     pub shares: Mutex<ShareStore>,
     pub rl: Mutex<RateLimiter>,
     pub config: Config,
-    pub store: PersistentStore,
+    pub store: Arc<PersistentStore>,
     #[cfg(feature = "mqtt-bridge")]
     pub mesh_uplink: RwLock<Option<mpsc::Sender<String>>>,
     #[cfg(feature = "reticulum-bridge")]

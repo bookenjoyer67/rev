@@ -7,7 +7,7 @@ use komun_core::models::{Community, CreateCommunity, Invite, Visibility};
 
 pub async fn list(pool: &PgPool) -> Result<Vec<Community>> {
     let rows = sqlx::query_as::<_, CommunityRow>(
-        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, created_at FROM communities ORDER BY created_at DESC"
+        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, created_at FROM communities ORDER BY created_at DESC"
     )
     .fetch_all(pool)
     .await?;
@@ -17,7 +17,7 @@ pub async fn list(pool: &PgPool) -> Result<Vec<Community>> {
 
 pub async fn get_by_slug(pool: &PgPool, slug: &str) -> Result<Community> {
     let row = sqlx::query_as::<_, CommunityRow>(
-        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, created_at FROM communities WHERE slug = $1"
+        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, created_at FROM communities WHERE slug = $1"
     )
     .bind(slug)
     .fetch_optional(pool)
@@ -27,7 +27,20 @@ pub async fn get_by_slug(pool: &PgPool, slug: &str) -> Result<Community> {
     Ok(row.into())
 }
 
-pub async fn create(pool: &PgPool, input: CreateCommunity) -> Result<Community> {
+pub async fn get_map_secret_key(pool: &PgPool, slug: &str) -> Result<Option<String>> {
+    let row = sqlx::query(
+        "SELECT map_secret_key FROM communities WHERE slug = $1"
+    )
+    .bind(slug)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|r| {
+        let bytes: Option<Vec<u8>> = r.get("map_secret_key");
+        bytes.map(|b| String::from_utf8_lossy(&b).to_string())
+    }))
+}
+
+pub async fn create(pool: &PgPool, input: CreateCommunity, map_community_id: Option<Uuid>, map_secret_key: Option<&[u8]>) -> Result<Community> {
     let id = Uuid::now_v7();
     let visibility = match input.visibility.unwrap_or(Visibility::Federated) {
         Visibility::Public => "public",
@@ -36,7 +49,7 @@ pub async fn create(pool: &PgPool, input: CreateCommunity) -> Result<Community> 
     };
 
     sqlx::query(
-        "INSERT INTO communities (id, slug, name, description, location_name, location_lat, location_lon, visibility) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+        "INSERT INTO communities (id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, map_secret_key) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
     )
     .bind(id)
     .bind(&input.slug)
@@ -46,6 +59,8 @@ pub async fn create(pool: &PgPool, input: CreateCommunity) -> Result<Community> 
     .bind(input.location_lat)
     .bind(input.location_lon)
     .bind(visibility)
+    .bind(map_community_id)
+    .bind(map_secret_key)
     .execute(pool)
     .await?;
 
@@ -208,6 +223,7 @@ struct CommunityRow {
     location_lat: Option<f64>,
     location_lon: Option<f64>,
     visibility: String,
+    map_community_id: Option<Uuid>,
     created_at: chrono::DateTime<Utc>,
 }
 
@@ -226,6 +242,8 @@ impl From<CommunityRow> for Community {
                 "private" => Visibility::Private,
                 _ => Visibility::Federated,
             },
+            map_community_id: r.map_community_id,
+            map_secret_key: None,
             created_at: r.created_at,
         }
     }

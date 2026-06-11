@@ -35,6 +35,7 @@ struct CommunityResponse {
     community: Community,
     is_member: bool,
     member_role: Option<String>,
+    map_secret_key: Option<String>,
 }
 
 async fn list_communities(
@@ -63,10 +64,17 @@ async fn get_community(
         None
     };
 
+    let map_secret_key = if member_role.is_some() {
+        crate::db::communities::get_map_secret_key(&state.pool, &slug).await.ok().flatten()
+    } else {
+        None
+    };
+
     Ok(Json(CommunityResponse {
         is_member: member_role.is_some(),
         member_role,
         community,
+        map_secret_key,
     }))
 }
 
@@ -75,7 +83,39 @@ async fn create_community(
     Extension(auth): Extension<AuthUser>,
     Json(input): Json<CreateCommunity>,
 ) -> Result<Json<Community>, StatusError> {
-    let community = crate::db::communities::create(&state.pool, input).await?;
+    let description = input.description.clone().unwrap_or_default();
+    let visibility_str = match input.visibility.clone().unwrap_or(komun_core::models::Visibility::Federated) {
+        komun_core::models::Visibility::Public => "public",
+        komun_core::models::Visibility::Federated => "federated",
+        komun_core::models::Visibility::Private => "private",
+    };
+
+    let (map_community_id, map_secret_key) = if let Some(ref store) = state.relay_store {
+        match crate::relay_ops::create_relay_community(
+            store,
+            &input.name,
+            &description,
+            visibility_str,
+        ).await {
+            Ok((cid, sk)) => {
+                let mid = uuid::Uuid::parse_str(&cid).ok();
+                (mid, Some(sk))
+            }
+            Err(e) => {
+                tracing::warn!("relay community creation failed: {}", e);
+                (None, None)
+            }
+        }
+    } else {
+        (None, None)
+    };
+
+    let community = crate::db::communities::create(
+        &state.pool,
+        input,
+        map_community_id,
+        map_secret_key.as_deref().map(|s| s.as_bytes()),
+    ).await?;
     crate::db::communities::add_member(&state.pool, community.id, auth.user_id, "admin").await?;
     Ok(Json(community))
 }

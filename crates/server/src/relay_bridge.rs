@@ -9,8 +9,9 @@ use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 use crate::config::RelayConfig;
+use komun_relay::storage::PersistentStore;
 
-pub async fn spawn_relay(relay_config: RelayConfig) {
+pub async fn spawn_relay(relay_config: RelayConfig, store: Arc<PersistentStore>) {
     let mut config = komun_relay::config::Config::default();
     config.server.port = relay_config.port;
     config.server.bind_address = relay_config.bind_address.clone();
@@ -19,13 +20,6 @@ pub async fn spawn_relay(relay_config: RelayConfig) {
         config.rooms.max_clients = relay_config.max_clients_per_room;
     }
 
-    std::fs::create_dir_all(&relay_config.storage_path).ok();
-
-    let snapshot_path = std::path::PathBuf::from(&relay_config.storage_path).join("community_data.json");
-    let store = komun_relay::storage::PersistentStore::new(
-        Some(snapshot_path),
-        config.storage.max_pins_per_community,
-    );
     let max_conn = config.server.max_connections.max(1);
 
     let state = Arc::new(komun_relay::state::AppState {
@@ -36,7 +30,7 @@ pub async fn spawn_relay(relay_config: RelayConfig) {
         )),
         rl: Mutex::new(komun_relay::rate::RateLimiter::new(config.rate_limit.clone())),
         config: config.clone(),
-        store,
+        store: store.clone(),
         #[cfg(feature = "mqtt-bridge")]
         mesh_uplink: tokio::sync::RwLock::new(None),
         #[cfg(feature = "reticulum-bridge")]
