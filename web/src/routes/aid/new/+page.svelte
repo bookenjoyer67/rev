@@ -21,6 +21,7 @@
 	let contactMethod = $state('');
 	let error = $state('');
 	let loading = $state(false);
+	let showPicker = $state(false);
 	let mapIframeSrc: string | null = $state(null);
 
 	const expiryDefaults: Record<string, string> = { need: '7', offer: '14', resource: '0' };
@@ -82,9 +83,11 @@
 
 	function handlePickMessage(event: MessageEvent) {
 		if (event.origin !== 'https://app.piggpin.space') return;
+		console.log('[rev] pick message:', event.data);
 		if (event.data?.type === 'piggpin:location-picked') {
 			locationLat = event.data.lat;
 			locationLon = event.data.lng;
+			console.log('[rev] picked location:', locationLat, locationLon);
 		}
 	}
 
@@ -195,17 +198,25 @@
 		</label>
 
 		{#if mapIframeSrc}
-			<div class="map-picker">
+			<div class="picker-section">
 				{#if locationLat != null && locationLon != null}
-					<div class="picked-coords">Pinned: {locationLat.toFixed(5)}, {locationLon.toFixed(5)} <button type="button" class="clear-pin" onclick={() => { locationLat = null; locationLon = null; }}>×</button></div>
+					<div class="picked-coords">
+						Pinned: {locationLat.toFixed(5)}, {locationLon.toFixed(5)}
+						<button type="button" class="clear-pin" onclick={() => { locationLat = null; locationLon = null; }}>×</button>
+					</div>
+				{:else}
+					<button type="button" class="pick-toggle" onclick={() => showPicker = !showPicker}>
+						📌 {showPicker ? 'Hide map' : 'Pin on map'}
+					</button>
 				{/if}
-				<iframe
-					src={mapIframeSrc}
-					title="Pick a location on the map"
-					allow="geolocation; clipboard-write"
-					sandbox="allow-scripts allow-same-origin allow-popups"
-				></iframe>
-				<div class="map-hint">Click the map to pin a location. Not seeing the pin button? It's in the toolbar on the right.</div>
+				{#if showPicker}
+					<iframe
+						src={mapIframeSrc}
+						title="Pick a location on the map"
+						allow="geolocation; clipboard-write"
+						sandbox="allow-scripts allow-same-origin allow-popups"
+					></iframe>
+				{/if}
 			</div>
 		{/if}
 
@@ -285,21 +296,35 @@
 		background: var(--accent-soft);
 	}
 
-	.map-picker {
+	.picker-section {
 		margin: -0.5rem 0;
 	}
 
-	.map-picker iframe {
+	.pick-toggle {
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		padding: 0.5rem 0.75rem;
+		color: var(--text);
+		font-size: 0.85rem;
+		cursor: pointer;
+		width: 100%;
+		text-align: left;
+	}
+	.pick-toggle:hover { border-color: var(--accent); }
+
+	.picker-section iframe {
 		width: 100%;
 		height: 250px;
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
+		margin-top: 0.5rem;
 	}
 
 	.picked-coords {
 		font-size: 0.8rem;
 		color: var(--accent);
-		margin-bottom: 0.25rem;
+		margin-bottom: 0;
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
@@ -314,12 +339,6 @@
 		font-size: 0.75rem;
 		padding: 0 4px;
 		line-height: 1.2;
-	}
-
-	.map-hint {
-		font-size: 0.7rem;
-		color: var(--text-muted);
-		margin-top: 0.25rem;
 	}
 
 	button[type="submit"] {

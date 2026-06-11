@@ -105,7 +105,7 @@ export const api = {
 			request<any>(`/communities/${slug}/posts/${id}`, {
 				method: 'DELETE',
 				auth: true,
-			}),
+			}).catch((e: Error) => { console.error('[delete] withdraw failed:', e.message); throw e; }),
 	},
 
 	conversations: {
