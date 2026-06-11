@@ -1,7 +1,6 @@
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
 use chacha20poly1305::aead::{Aead, OsRng};
 use hkdf::Hkdf;
-use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
 use sha2::Sha256;
 use tracing::info;
@@ -10,24 +9,8 @@ use x25519_dalek::{PublicKey, StaticSecret};
 
 use komun_relay::storage::{CommunityConfig, PersistentStore};
 
-pub fn generate_map_password() -> String {
-    let mut bytes = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    hex::encode(bytes)
-}
-
-pub fn hash_community_password(password: &str, community_id: &str) -> String {
-    use sha2::Digest;
-    let mut hasher = Sha256::new();
-    hasher.update(format!("{}{}", password, community_id));
-    hex::encode(hasher.finalize())
-}
-
-pub fn derive_community_keypair(password: &str, community_id: &str) -> (StaticSecret, PublicKey) {
-    let mut seed = [0u8; 32];
-    let salt = format!("piggpin:v1:pbkdf2:{}", community_id);
-    pbkdf2_hmac::<Sha256>(password.as_bytes(), salt.as_bytes(), 210_000, &mut seed);
-    let secret = StaticSecret::from(seed);
+pub fn generate_community_keypair() -> (StaticSecret, PublicKey) {
+    let secret = StaticSecret::random_from_rng(OsRng);
     let public = PublicKey::from(&secret);
     (secret, public)
 }
@@ -80,12 +63,10 @@ pub async fn create_relay_community(
     visibility: &str,
 ) -> Result<(String, String), String> {
     let community_id = Uuid::now_v7().to_string();
-    let password = generate_map_password();
-    let password_hash = hash_community_password(&password, &community_id);
-
-    let (secret, public) = derive_community_keypair(&password, &community_id);
+    let (secret, public) = generate_community_keypair();
     let genesis_public_key = hex::encode(public.as_bytes());
     let public_key_hex = genesis_public_key.clone();
+    let secret_key_hex = hex::encode(secret.as_bytes());
 
     let dek = generate_dek();
     let wrapped_dek = wrap_dek(&dek, &public_key_hex)?;
@@ -93,15 +74,15 @@ pub async fn create_relay_community(
     let config = CommunityConfig {
         community_id: community_id.clone(),
         name: name.to_string(),
-        genesis_public_key,
+        genesis_public_key: genesis_public_key.clone(),
         public_key: public_key_hex,
-        secret_key: hex::encode(secret.as_bytes()),
+        secret_key: String::new(),
         wrapped_dek,
-        key_derivation: "pbkdf2".to_string(),
+        key_derivation: "random".to_string(),
         published: visibility != "private",
         visibility: visibility.to_string(),
         description: description.to_string(),
-        owner_pubkey: hex::encode(public.as_bytes()),
+        owner_pubkey: genesis_public_key,
         members: vec![],
         governance: serde_json::json!({
             "contribution": "open",
@@ -112,7 +93,7 @@ pub async fn create_relay_community(
             "join_policy": "open"
         }),
         bounds: None,
-        password_hash: Some(password_hash),
+        password_hash: None,
         join_wrapped_dek: None,
         used_token_nonces: vec![],
     };
@@ -122,5 +103,5 @@ pub async fn create_relay_community(
 
     info!("[relay] created map community {} for {}", community_id, name);
 
-    Ok((community_id, password))
+    Ok((community_id, secret_key_hex))
 }

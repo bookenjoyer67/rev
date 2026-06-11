@@ -44,11 +44,15 @@
 				if (community.map_secret_key) {
 					mapSecretKey = community.map_secret_key;
 				}
-				const payload = {
+				const payload: Record<string, string> = {
 					cid: community.map_community_id,
 					n: community.name,
-					r: relayUrl.replace('wss://', '').replace('ws://', ''),
+					r: relayUrl,
+					pw: 'false',
 				};
+				if (community.map_secret_key) {
+					payload.sk = community.map_secret_key;
+				}
 				const b64 = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 				iframeSrc = `https://app.piggpin.space/?embed=1#community=${b64}`;
 			}

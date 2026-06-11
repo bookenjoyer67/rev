@@ -1,0 +1,67 @@
+{
+  "communities": [
+    {
+      "community_id": "019eb428-c3a5-7713-bd79-b85168f1fb73",
+      "name": "test",
+      "genesis_public_key": "012ba47cdf79165d30e01cc05f419529e4ec2aec3c0c6346ac148550e700e334",
+      "public_key": "012ba47cdf79165d30e01cc05f419529e4ec2aec3c0c6346ac148550e700e334",
+      "secret_key": "",
+      "wrapped_dek": "",
+      "key_derivation": "pbkdf2",
+      "published": true,
+      "visibility": "federated",
+      "description": "testing stuff",
+      "owner_pubkey": "012ba47cdf79165d30e01cc05f419529e4ec2aec3c0c6346ac148550e700e334",
+      "members": [],
+      "governance": {
+        "contribution": "open",
+        "fork_policy": "allowed",
+        "join_policy": "open",
+        "key_rotation": "founder_only",
+        "schema_authority": "any_member",
+        "validation": "none"
+      },
+      "bounds": null,
+      "password_hash": "b999d0ddd97c5be74fa3a48a63b4433c41a29c801bdcd39fde8c6e07fa94041a",
+      "join_wrapped_dek": null,
+      "used_token_nonces": []
+    },
+    {
+      "community_id": "019eb431-bf91-7c03-868b-680bb28eb5a3",
+      "name": "map",
+      "genesis_public_key": "22c817407455b71c2ce64ca3cbb03167c3f8c897367f027db9b11b5a7c73b101",
+      "public_key": "22c817407455b71c2ce64ca3cbb03167c3f8c897367f027db9b11b5a7c73b101",
+      "secret_key": "",
+      "wrapped_dek": "",
+      "key_derivation": "pbkdf2",
+      "published": true,
+      "visibility": "federated",
+      "description": "maps",
+      "owner_pubkey": "22c817407455b71c2ce64ca3cbb03167c3f8c897367f027db9b11b5a7c73b101",
+      "members": [],
+      "governance": {
+        "contribution": "open",
+        "fork_policy": "allowed",
+        "join_policy": "open",
+        "key_rotation": "founder_only",
+        "schema_authority": "any_member",
+        "validation": "none"
+      },
+      "bounds": null,
+      "password_hash": "9a4c61525577ea9d0df75aafdc17e3b7d8613e3567c6091796cde330eeaecb40",
+      "join_wrapped_dek": null,
+      "used_token_nonces": []
+    }
+  ],
+  "pins": {},
+  "annotations": {},
+  "drawings": {},
+  "tombstones": {},
+  "votes": {},
+  "tokens": {},
+  "public_layers": {},
+  "layer_subscriptions": {},
+  "member_deks": {},
+  "pending_dek_requests": {},
+  "push_subscriptions": {}
+}
