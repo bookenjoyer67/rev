@@ -82,6 +82,7 @@
 	});
 
 	function handlePickMessage(event: MessageEvent) {
+		console.log('[rev] ANY msg:', event.origin, typeof event.data, event.data?.type);
 		if (event.origin !== 'https://app.piggpin.space') return;
 		console.log('[rev] pick message:', event.data);
 		if (event.data?.type === 'piggpin:location-picked') {
