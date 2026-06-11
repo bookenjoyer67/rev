@@ -11,14 +11,17 @@
 	let mapCommunityId: string | null = $state(null);
 	let mapSecretKey: string | null = $state(null);
 	let communityName: string | null = $state(null);
+	let iframeSrc: string | null = $state(null);
 	let loading = $state(true);
 	let error: string | null = $state(null);
 
-	let displayName = $derived((() => {
+	let displayName = $derived(getDisplayName());
+
+	function getDisplayName(): string | null {
 		const server = getActiveServer();
 		if (!server) return null;
 		return $auth.servers?.[server]?.displayName || null;
-	})());
+	}
 
 	onMount(async () => {
 		if (!isConnected()) { goto('/connect'); return; }
@@ -40,23 +43,19 @@
 				if (community.map_secret_key) {
 					mapSecretKey = community.map_secret_key;
 				}
+				const payload = {
+					cid: community.map_community_id,
+					n: community.name,
+					r: relayUrl.replace('wss://', '').replace('ws://', ''),
+				};
+				const b64 = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+				iframeSrc = `https://app.piggpin.space/?embed=1#community=${b64}`;
 			}
 		} catch (e: any) {
 			error = e.message || 'Failed to load community map data';
 		}
 
 		loading = false;
-	});
-
-	let iframeSrc = $derived(() => {
-		if (!mapCommunityId || !communityName) return null;
-		const payload = {
-			cid: mapCommunityId,
-			n: communityName,
-			r: relayUrl.replace('wss://', '').replace('ws://', ''),
-		};
-		const b64 = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-		return `https://app.piggpin.space/?embed=1#community=${b64}`;
 	});
 
 	function handleMessage(event: MessageEvent) {
