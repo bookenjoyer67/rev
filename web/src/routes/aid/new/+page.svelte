@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { requireAuth } from '$lib/stores/auth';
 	import { api } from '$lib/api/client';
+	import { getActiveServer } from '$lib/stores/server';
 	import { onMount } from 'svelte';
 
 	interface Community { slug: string; name: string; }
@@ -15,9 +16,12 @@
 	let urgency = $state('medium');
 	let expiresIn = $state('7');
 	let locationName = $state('');
+	let locationLat: number | null = $state(null);
+	let locationLon: number | null = $state(null);
 	let contactMethod = $state('');
 	let error = $state('');
 	let loading = $state(false);
+	let mapIframeSrc: string | null = $state(null);
 
 	const expiryDefaults: Record<string, string> = { need: '7', offer: '14', resource: '0' };
 
@@ -39,7 +43,54 @@
 				selectedCommunity = communities[0].slug;
 			}
 		} catch (e) {}
+
+		const server = getActiveServer();
+		if (server) {
+			try {
+				const nodeInfo = await fetch(`${server}/api/node`).then(r => r.json());
+				const relayUrl = nodeInfo.relay_url || '';
+				if (relayUrl) {
+					for (const c of communities) {
+						try {
+							const community = await api.communities.get(c.slug);
+							if (community.map_community_id) {
+								const payload: Record<string, string> = {
+									cid: community.map_community_id,
+									n: community.name,
+									r: relayUrl,
+									pw: 'false',
+								};
+								if (community.location_lat != null && community.location_lon != null) {
+									payload.lat = String(community.location_lat);
+									payload.lon = String(community.location_lon);
+									payload.zoom = '14';
+								} else if (nodeInfo.location?.lat != null) {
+									payload.lat = String(nodeInfo.location.lat);
+									payload.lon = String(nodeInfo.location.lon);
+									payload.zoom = '10';
+								}
+								const b64 = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+								mapIframeSrc = `https://app.piggpin.space/?embed=1&picker=1#community=${b64}`;
+								break;
+							}
+						} catch (_) {}
+					}
+				}
+			} catch (_) {}
+		}
 	});
+
+	function handlePickMessage(event: MessageEvent) {
+		if (event.origin !== 'https://app.piggpin.space') return;
+		if (event.data?.type === 'piggpin:ready') {
+			const iframe = document.querySelector('.map-picker iframe') as HTMLIFrameElement | null;
+			iframe?.contentWindow?.postMessage({ type: 'piggpin:pick-location' }, 'https://app.piggpin.space');
+		}
+		if (event.data?.type === 'piggpin:location-picked') {
+			locationLat = event.data.lat;
+			locationLon = event.data.lng;
+		}
+	}
 
 	function submit() {
 		requireAuth(async () => {
@@ -56,6 +107,8 @@
 					urgency: kind === 'need' ? urgency : null,
 					expires_at: getExpiresAt(),
 					location_name: locationName.trim() || null,
+					location_lat: locationLat,
+					location_lon: locationLon,
 					contact_method: contactMethod.trim() || null,
 				});
 				goto(`/c/${selectedCommunity}`);
@@ -67,6 +120,8 @@
 		});
 	}
 </script>
+
+<svelte:window onmessage={handlePickMessage} />
 
 <div class="container">
 	<h1>New Post</h1>
@@ -143,6 +198,21 @@
 			<input type="text" bind:value={locationName} placeholder="Neighborhood or area" />
 		</label>
 
+		{#if mapIframeSrc}
+			<div class="map-picker">
+				{#if locationLat != null && locationLon != null}
+					<div class="picked-coords">Pinned: {locationLat.toFixed(5)}, {locationLon.toFixed(5)} <button type="button" class="clear-pin" onclick={() => { locationLat = null; locationLon = null; }}>×</button></div>
+				{/if}
+				<iframe
+					src={mapIframeSrc}
+					title="Pick a location on the map"
+					allow="geolocation; clipboard-write"
+					sandbox="allow-scripts allow-same-origin allow-popups"
+				></iframe>
+				<div class="map-hint">Click the map to pin a location. Not seeing the pin button? It's in the toolbar on the right.</div>
+			</div>
+		{/if}
+
 		<label>
 			<span>Contact method (optional)</span>
 			<input type="text" bind:value={contactMethod} placeholder="How should people reach you?" />
@@ -217,6 +287,43 @@
 		border-color: var(--accent);
 		color: var(--accent);
 		background: var(--accent-soft);
+	}
+
+	.map-picker {
+		margin: -0.5rem 0;
+	}
+
+	.map-picker iframe {
+		width: 100%;
+		height: 250px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+	}
+
+	.picked-coords {
+		font-size: 0.8rem;
+		color: var(--accent);
+		margin-bottom: 0.25rem;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.clear-pin {
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: 3px;
+		color: var(--text-muted);
+		cursor: pointer;
+		font-size: 0.75rem;
+		padding: 0 4px;
+		line-height: 1.2;
+	}
+
+	.map-hint {
+		font-size: 0.7rem;
+		color: var(--text-muted);
+		margin-top: 0.25rem;
 	}
 
 	button[type="submit"] {
