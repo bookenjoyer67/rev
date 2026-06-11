@@ -8,6 +8,8 @@
 
 	let slug = $state('');
 	let relayUrl = $state('');
+	let serverLat: number | null = $state(null);
+	let serverLon: number | null = $state(null);
 	let mapCommunityId: string | null = $state(null);
 	let mapSecretKey: string | null = $state(null);
 	let communityName: string | null = $state(null);
@@ -33,6 +35,10 @@
 				if (nodeInfo.relay_url) {
 					relayUrl = nodeInfo.relay_url;
 				}
+				if (nodeInfo.location?.lat != null) {
+					serverLat = nodeInfo.location.lat;
+					serverLon = nodeInfo.location.lon;
+				}
 			} catch (_) {}
 		}
 
@@ -50,9 +56,11 @@
 					r: relayUrl,
 					pw: 'false',
 				};
-				if (community.location_lat != null && community.location_lon != null) {
-					payload.lat = String(community.location_lat);
-					payload.lon = String(community.location_lon);
+				const lat = community.location_lat ?? serverLat;
+				const lon = community.location_lon ?? serverLon;
+				if (lat != null && lon != null) {
+					payload.lat = String(lat);
+					payload.lon = String(lon);
 					payload.zoom = '15';
 				}
 				if (community.map_secret_key) {
