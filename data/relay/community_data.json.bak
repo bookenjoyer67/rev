@@ -1,6 +1,43 @@
 {
   "communities": [
     {
+      "community_id": "019eb442-c4fe-7832-9ad2-882e30f50777",
+      "name": "map2",
+      "genesis_public_key": "dad794638eaa5c1d829bf84d6f2573c0cc09720aaacc1b7bd9cc88cca9df4828",
+      "public_key": "dad794638eaa5c1d829bf84d6f2573c0cc09720aaacc1b7bd9cc88cca9df4828",
+      "secret_key": "",
+      "wrapped_dek": "",
+      "key_derivation": "random",
+      "published": true,
+      "visibility": "federated",
+      "description": "here",
+      "owner_pubkey": "dad794638eaa5c1d829bf84d6f2573c0cc09720aaacc1b7bd9cc88cca9df4828",
+      "members": [
+        {
+          "pubkey": "0c6fe36db4669387cac4cfb1ab32c70e81f429f212f9bc5da1a112d090965726",
+          "display_name": "",
+          "role": "contributor"
+        },
+        {
+          "pubkey": "394efaaf99feac8b7adf8d710d03d7d633a520e351530ba75aedb4746705ae22",
+          "display_name": "",
+          "role": "contributor"
+        }
+      ],
+      "governance": {
+        "contribution": "open",
+        "fork_policy": "allowed",
+        "join_policy": "open",
+        "key_rotation": "founder_only",
+        "schema_authority": "any_member",
+        "validation": "none"
+      },
+      "bounds": null,
+      "password_hash": null,
+      "join_wrapped_dek": null,
+      "used_token_nonces": []
+    },
+    {
       "community_id": "019eb428-c3a5-7713-bd79-b85168f1fb73",
       "name": "test",
       "genesis_public_key": "012ba47cdf79165d30e01cc05f419529e4ec2aec3c0c6346ac148550e700e334",
@@ -49,6 +86,32 @@
       },
       "bounds": null,
       "password_hash": "9a4c61525577ea9d0df75aafdc17e3b7d8613e3567c6091796cde330eeaecb40",
+      "join_wrapped_dek": null,
+      "used_token_nonces": []
+    },
+    {
+      "community_id": "019eb44c-6db3-7f72-8173-6ba1e5aad958",
+      "name": "a",
+      "genesis_public_key": "34126c75211afbce27c3df851736d20f5ddce8f47072ac6327858770c1f71403",
+      "public_key": "34126c75211afbce27c3df851736d20f5ddce8f47072ac6327858770c1f71403",
+      "secret_key": "",
+      "wrapped_dek": "",
+      "key_derivation": "random",
+      "published": true,
+      "visibility": "federated",
+      "description": "s",
+      "owner_pubkey": "34126c75211afbce27c3df851736d20f5ddce8f47072ac6327858770c1f71403",
+      "members": [],
+      "governance": {
+        "contribution": "open",
+        "fork_policy": "allowed",
+        "join_policy": "open",
+        "key_rotation": "founder_only",
+        "schema_authority": "any_member",
+        "validation": "none"
+      },
+      "bounds": null,
+      "password_hash": null,
       "join_wrapped_dek": null,
       "used_token_nonces": []
     }

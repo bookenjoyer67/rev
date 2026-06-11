@@ -50,6 +50,11 @@
 					r: relayUrl,
 					pw: 'false',
 				};
+				if (community.location_lat != null && community.location_lon != null) {
+					payload.lat = String(community.location_lat);
+					payload.lon = String(community.location_lon);
+					payload.zoom = '15';
+				}
 				if (community.map_secret_key) {
 					payload.sk = community.map_secret_key;
 				}
