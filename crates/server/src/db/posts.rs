@@ -21,6 +21,7 @@ pub async fn list(
            federated_id, origin_node, created_at, updated_at
            FROM posts
            WHERE community_id = $1
+           AND status != 'withdrawn'
            AND ($2::text IS NULL OR kind = $2)
            AND ($3::text IS NULL OR category = $3)
            AND ($4::text IS NULL OR status = $4)
