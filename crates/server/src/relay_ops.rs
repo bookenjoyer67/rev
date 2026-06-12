@@ -32,6 +32,16 @@ pub async fn create_relay_community(
             "key_rotation": "founder_only",
             "fork_policy": "allowed",
             "join_policy": "open",
+            "post_kind_emoji": {
+                "need": "🆘",
+                "offer": "🤝",
+                "resource": "📦"
+            },
+            "post_kind_color": {
+                "need": "#ef4444",
+                "offer": "#16a34a",
+                "resource": "#2563eb"
+            },
             "default_schema": {
                 "name": "Komun Post",
                 "fields": [
