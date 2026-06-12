@@ -95,6 +95,19 @@
 		}
 	}
 
+	function sendPinDetails() {
+		const iframe = document.querySelector('iframe');
+		if (iframe?.contentWindow) {
+			try {
+				iframe.contentWindow.postMessage({
+					type: 'komun:pin-details',
+					title: title,
+					body: body
+				}, 'https://app.piggpin.space');
+			} catch (_) {}
+		}
+	}
+
 	function submit() {
 		requireAuth(async () => {
 			if (!selectedCommunity) { error = 'Select a community'; return; }
@@ -164,12 +177,12 @@
 
 		<label>
 			<span>Title</span>
-			<input type="text" bind:value={title} placeholder="What do you need or offer?" maxlength="200" />
+			<input type="text" bind:value={title} oninput={sendPinDetails} placeholder="What do you need or offer?" maxlength="200" />
 		</label>
 
 		<label>
 			<span>Details (optional)</span>
-			<textarea bind:value={body} placeholder="More info..." rows="3"></textarea>
+			<textarea bind:value={body} oninput={sendPinDetails} placeholder="More info..." rows="3"></textarea>
 		</label>
 
 		{#if kind === 'need'}
@@ -209,7 +222,7 @@
 						<button type="button" class="clear-pin" onclick={() => { locationLat = null; locationLon = null; }}>×</button>
 					</div>
 				{:else}
-					<button type="button" class="pick-toggle" onclick={() => showPicker = !showPicker}>
+					<button type="button" class="pick-toggle" onclick={() => { showPicker = !showPicker; if (showPicker) setTimeout(sendPinDetails, 2000); }}>
 						📌 {showPicker ? 'Hide map' : 'Pin on map'}
 					</button>
 				{/if}

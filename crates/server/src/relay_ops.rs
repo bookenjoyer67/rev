@@ -31,7 +31,17 @@ pub async fn create_relay_community(
             "schema_authority": "any_member",
             "key_rotation": "founder_only",
             "fork_policy": "allowed",
-            "join_policy": "open"
+            "join_policy": "open",
+            "default_schema": {
+                "name": "Komun Post",
+                "fields": [
+                    {"key": "kind", "label": "Type", "type": "choice", "options": ["need", "offer", "resource"]},
+                    {"key": "category", "label": "Category", "type": "choice", "options": ["food", "shelter", "health", "transport", "education", "labor", "legal", "other"]},
+                    {"key": "urgency", "label": "Urgency", "type": "choice", "options": ["critical", "high", "medium", "low"]},
+                    {"key": "quantity", "label": "Quantity", "type": "number"},
+                    {"key": "contact", "label": "Contact", "type": "text"}
+                ]
+            }
         }),
         bounds: None,
         password_hash: None,
