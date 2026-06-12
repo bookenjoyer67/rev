@@ -102,7 +102,11 @@
 				iframe.contentWindow.postMessage({
 					type: 'komun:pin-details',
 					title: title,
-					body: body
+					body: body,
+					kind,
+					category,
+					urgency: kind === 'need' ? urgency : null,
+					contact: contactMethod
 				}, 'https://app.piggpin.space');
 			} catch (_) {}
 		}
