@@ -127,6 +127,11 @@
 					location_lon: locationLon,
 					contact_method: contactMethod.trim() || null,
 				});
+				sendPinDetails();
+				const iframe = document.querySelector('iframe');
+				if (iframe?.contentWindow) {
+					try { iframe.contentWindow.postMessage({ type: 'komun:submit' }, 'https://app.piggpin.space'); } catch (_) {}
+				}
 				goto(`/c/${selectedCommunity}`);
 			} catch (e: any) {
 				error = e.message || 'Failed to create post';
