@@ -42,6 +42,7 @@ pub async fn handle_sync_request(ctx: &HandlerContext<'_>, v: &serde_json::Value
             if p.vote_count_down > 0 { j["vote_count_down"] = serde_json::Value::Number(p.vote_count_down.into()); }
             if let Some(ref lid) = p.layer_id { j["layer_id"] = serde_json::Value::String(lid.clone()); }
             if let Some(ref e) = p.emoji { j["emoji"] = serde_json::Value::String(e.clone()); }
+            if let Some(ref cd) = p.custom_data { j["custom_data"] = cd.clone(); }
             j
         }).collect::<Vec<_>>(),
         "annotations": annotations.iter().map(|a| {

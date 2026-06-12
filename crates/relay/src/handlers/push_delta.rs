@@ -133,6 +133,7 @@ pub async fn handle_push_delta(ctx: &HandlerContext<'_>, v: &serde_json::Value) 
                 vote_count_down: pin.get("vote_count_down").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
                 layer_id: pin.get("layer_id").and_then(|l| l.as_str()).map(|s| s.to_string()),
                 emoji: pin.get("emoji").and_then(|e| e.as_str()).map(|s| s.to_string()),
+                custom_data: pin.get("custom_data").cloned(),
             }).await;
             tracing::info!("[relay] pin stored: community={} pin={} author={}", community_id, pin_id, &author[..author.len().min(12)]);
             pin_count += 1;

@@ -19,6 +19,7 @@ pub struct StoredPin {
     pub vote_count_down: u32,
     pub layer_id: Option<String>,
     pub emoji: Option<String>,
+    pub custom_data: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
