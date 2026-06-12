@@ -7,7 +7,7 @@ use komun_core::models::{Community, CreateCommunity, Invite, Visibility};
 
 pub async fn list(pool: &PgPool) -> Result<Vec<Community>> {
     let rows = sqlx::query_as::<_, CommunityRow>(
-        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, created_at FROM communities ORDER BY created_at DESC"
+        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, map_secret_key, created_at FROM communities ORDER BY created_at DESC"
     )
     .fetch_all(pool)
     .await?;
@@ -17,7 +17,7 @@ pub async fn list(pool: &PgPool) -> Result<Vec<Community>> {
 
 pub async fn get_by_slug(pool: &PgPool, slug: &str) -> Result<Community> {
     let row = sqlx::query_as::<_, CommunityRow>(
-        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, created_at FROM communities WHERE slug = $1"
+        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, map_secret_key, created_at FROM communities WHERE slug = $1"
     )
     .bind(slug)
     .fetch_optional(pool)
@@ -211,6 +211,7 @@ struct CommunityRow {
     location_lon: Option<f64>,
     visibility: String,
     map_community_id: Option<Uuid>,
+    map_secret_key: Option<Vec<u8>>,
     created_at: chrono::DateTime<Utc>,
 }
 
@@ -230,6 +231,7 @@ impl From<CommunityRow> for Community {
                 _ => Visibility::Federated,
             },
             map_community_id: r.map_community_id,
+            map_secret_hex: r.map_secret_key.map(|bytes| bytes.iter().map(|b| format!("{:02x}", b)).collect()),
             created_at: r.created_at,
         }
     }

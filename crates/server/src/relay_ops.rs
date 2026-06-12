@@ -8,8 +8,9 @@ pub async fn create_relay_community(
     name: &str,
     description: &str,
     visibility: &str,
-) -> Result<String, String> {
+) -> Result<(String, Vec<u8>), String> {
     let community_id = Uuid::now_v7().to_string();
+    let secret_bytes = Uuid::now_v7().as_bytes().to_vec();
 
     let config = CommunityConfig {
         community_id: community_id.clone(),
@@ -43,5 +44,5 @@ pub async fn create_relay_community(
 
     info!("[relay] created map community {} for {}", community_id, name);
 
-    Ok(community_id)
+    Ok((community_id, secret_bytes))
 }

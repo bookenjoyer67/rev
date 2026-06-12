@@ -52,6 +52,9 @@
 					r: relayUrl,
 					pw: 'false',
 				};
+				if (community.map_secret_hex) {
+					payload.sk = community.map_secret_hex;
+				}
 				const lat = community.location_lat ?? serverLat;
 				const lon = community.location_lon ?? serverLon;
 				if (lat != null && lon != null) {

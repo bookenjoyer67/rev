@@ -82,28 +82,28 @@ async fn create_community(
         komun_core::models::Visibility::Private => "private",
     };
 
-    let map_community_id = if let Some(ref store) = state.relay_store {
+    let (map_community_id, map_secret_key) = if let Some(ref store) = state.relay_store {
         match crate::relay_ops::create_relay_community(
             store,
             &input.name,
             &description,
             visibility_str,
         ).await {
-            Ok(cid) => uuid::Uuid::parse_str(&cid).ok(),
+            Ok((cid, secret)) => (uuid::Uuid::parse_str(&cid).ok(), Some(secret)),
             Err(e) => {
                 tracing::warn!("relay community creation failed: {}", e);
-                None
+                (None, None)
             }
         }
     } else {
-        None
+        (None, None)
     };
 
     let community = crate::db::communities::create(
         &state.pool,
         input,
         map_community_id,
-        None,
+        map_secret_key.as_deref(),
     ).await?;
     crate::db::communities::add_member(&state.pool, community.id, auth.user_id, "admin").await?;
     Ok(Json(community))

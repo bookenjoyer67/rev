@@ -61,6 +61,9 @@
 									r: relayUrl,
 									pw: 'false',
 								};
+								if (community.map_secret_hex) {
+									payload.sk = community.map_secret_hex;
+								}
 								if (community.location_lat != null && community.location_lon != null) {
 									payload.lat = String(community.location_lat);
 									payload.lon = String(community.location_lon);
