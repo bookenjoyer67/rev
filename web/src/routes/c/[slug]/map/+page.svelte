@@ -105,7 +105,7 @@
 			src={iframeSrc}
 			title="Community Map"
 			allow="geolocation; clipboard-write"
-			sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+			sandbox="allow-scripts allow-popups allow-forms"
 		></iframe>
 	{/if}
 </div>

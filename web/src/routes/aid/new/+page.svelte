@@ -240,7 +240,7 @@
 						src={mapIframeSrc}
 						title="Pick a location on the map"
 						allow="geolocation; clipboard-write"
-						sandbox="allow-scripts allow-same-origin allow-popups"
+						sandbox="allow-scripts allow-popups"
 					></iframe>
 				{/if}
 			</div>
