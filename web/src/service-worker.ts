@@ -40,7 +40,10 @@ sw.addEventListener('fetch', (event) => {
 		return;
 	}
 
-	if (url.href.includes('/api/')) {
+	const CACHEABLE_API_PATHS = ['/api/node', '/api/health', '/api/communities', '/api/directory'];
+	const isCacheableApi = CACHEABLE_API_PATHS.some(p => url.pathname.startsWith(p));
+
+	if (isCacheableApi) {
 		event.respondWith(
 			fetch(request)
 				.then((response) => {
