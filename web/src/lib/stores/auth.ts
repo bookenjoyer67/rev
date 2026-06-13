@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 import { getActiveServer } from './server';
-import { generateFullKeypair, createKeyBundle, recoverFromBundle, computeRecoveryId } from '$lib/crypto';
+import { generateFullKeypair, createKeyBundle, recoverFromBundle, computeRecoveryId, generateRecoveryCode, hashRecoveryCode, deriveWrapKey, wrapAuthState, unwrapAuthState, bytesToBase64 } from '$lib/crypto';
 
 interface PerServerAuth {
 	token: string;
@@ -16,40 +16,96 @@ interface KeyPair {
 	x25519SecretKey: string;
 }
 
+let _wrapKey: string | null = null;
+let _passphrase: string | null = null;
+
+export function unlockAuth(passphrase: string) {
+	_passphrase = passphrase;
+	_wrapKey = null;
+}
+
+export function lockAuth() {
+	_passphrase = null;
+	_wrapKey = null;
+	sessionStorage.removeItem(SESSION_KEY);
+}
+
+async function getWrapKey(): Promise<string | null> {
+	if (_wrapKey) return _wrapKey;
+	if (!_passphrase) return null;
+	const salt = localStorage.getItem(SALT_KEY);
+	if (!salt) {
+		const newSalt = bytesToBase64(crypto.getRandomValues(new Uint8Array(32)));
+		localStorage.setItem(SALT_KEY, newSalt);
+		_wrapKey = await deriveWrapKey(_passphrase, newSalt);
+		return _wrapKey;
+	}
+	_wrapKey = await deriveWrapKey(_passphrase, salt);
+	return _wrapKey;
+}
+
 interface AuthState {
 	keypair: KeyPair | null;
 	servers: Record<string, PerServerAuth>;
 }
 
 const STORAGE_KEY = 'komun_auth';
+const SALT_KEY = 'komun_auth_salt';
+const SESSION_KEY = 'komun_auth_session';
 
-function loadFromStorage(): AuthState {
+async function loadFromStorage(): Promise<AuthState> {
 	if (typeof localStorage === 'undefined') return { keypair: null, servers: {} };
+
+	const sessionRaw = sessionStorage.getItem(SESSION_KEY);
+	if (sessionRaw) {
+		try { return JSON.parse(sessionRaw); } catch { return { keypair: null, servers: {} }; }
+	}
+
 	const raw = localStorage.getItem(STORAGE_KEY);
 	if (!raw) return { keypair: null, servers: {} };
+
+	const wrapKey = await getWrapKey();
+	if (!wrapKey) return { keypair: null, servers: {} };
+
 	try {
-		const parsed = JSON.parse(raw);
+		const decrypted = await unwrapAuthState(raw, wrapKey);
+		const parsed = JSON.parse(decrypted);
 		if (!parsed.servers || typeof parsed.servers !== 'object') {
 			return { keypair: null, servers: {} };
 		}
 		if (parsed.keypair && !parsed.keypair.x25519SecretKey) {
-			parsed.keypair = null;
-			parsed.servers = {};
+			return { keypair: null, servers: {} };
 		}
+		sessionStorage.setItem(SESSION_KEY, decrypted);
 		return parsed;
 	} catch {
 		return { keypair: null, servers: {} };
 	}
 }
 
-function saveToStorage(state: AuthState) {
+async function saveToStorage(state: AuthState) {
 	if (typeof localStorage === 'undefined') return;
-	localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+	const json = JSON.stringify(state);
+	sessionStorage.setItem(SESSION_KEY, json);
+	const wrapKey = await getWrapKey();
+	if (wrapKey) {
+		const encrypted = await wrapAuthState(json, wrapKey);
+		localStorage.setItem(STORAGE_KEY, encrypted);
+	}
 }
 
-export const auth = writable<AuthState>(loadFromStorage());
+export const auth = writable<AuthState>({ keypair: null, servers: {} });
 
-auth.subscribe(saveToStorage);
+let _initPromise: Promise<void> | null = null;
+export async function initAuth(passphrase?: string): Promise<void> {
+	if (_initPromise) return _initPromise;
+	if (passphrase) unlockAuth(passphrase);
+	_initPromise = loadFromStorage().then((state) => {
+		auth.set(state);
+		auth.subscribe((s) => { saveToStorage(s); });
+	});
+	return _initPromise;
+}
 
 export function getActiveAuth(): PerServerAuth | null {
 	const server = getActiveServer();
@@ -81,9 +137,9 @@ export function getPublicKey(): string | null {
 	return get(auth).keypair?.ed25519PublicKey || null;
 }
 
-export async function register(displayName: string, passphrase?: string): Promise<boolean> {
+export async function register(displayName: string, passphrase?: string): Promise<{ ok: boolean; recoveryCode?: string }> {
 	const server = getActiveServer();
-	if (!server) return false;
+	if (!server) return { ok: false };
 
 	let state = get(auth);
 	if (!state.keypair) {
@@ -98,6 +154,8 @@ export async function register(displayName: string, passphrase?: string): Promis
 		encryption_public_key: state.keypair!.x25519PublicKey,
 	};
 
+	let recoveryCode: string | undefined;
+
 	if (passphrase && passphrase.length > 0) {
 		const bundle = await createKeyBundle(
 			state.keypair!.ed25519SecretKey,
@@ -107,6 +165,9 @@ export async function register(displayName: string, passphrase?: string): Promis
 		body.encrypted_key_bundle = bundle.encryptedBundle;
 		body.bundle_salt = bundle.salt;
 		body.recovery_id = bundle.recoveryId;
+
+		recoveryCode = await generateRecoveryCode();
+		body.recovery_code_hash = await hashRecoveryCode(recoveryCode);
 	}
 
 	const res = await fetch(`${server}/api/auth/register`, {
@@ -115,7 +176,7 @@ export async function register(displayName: string, passphrase?: string): Promis
 		body: JSON.stringify(body),
 	});
 
-	if (!res.ok) return false;
+	if (!res.ok) return { ok: false };
 
 	const data = await res.json();
 	auth.update((s) => ({
@@ -131,7 +192,11 @@ export async function register(displayName: string, passphrase?: string): Promis
 		},
 	}));
 
-	return true;
+	if (passphrase && passphrase.length > 0) {
+		unlockAuth(passphrase);
+	}
+
+	return { ok: true, recoveryCode };
 }
 
 export function isSuperadmin(): boolean {
@@ -139,14 +204,19 @@ export function isSuperadmin(): boolean {
 	return auth_data?.role === 'superadmin';
 }
 
-export async function recover(serverUrl: string, passphrase: string): Promise<boolean> {
+export async function recover(serverUrl: string, passphrase: string, recoveryCode?: string): Promise<boolean> {
 	try {
 		const recoveryId = await computeRecoveryId(passphrase);
+
+		const body: Record<string, string> = { recovery_id: recoveryId };
+		if (recoveryCode) {
+			body.recovery_code_hash = await hashRecoveryCode(recoveryCode);
+		}
 
 		const res = await fetch(`${serverUrl}/api/auth/recover`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ recovery_id: recoveryId }),
+			body: JSON.stringify(body),
 		});
 
 		if (!res.ok) return false;
@@ -162,6 +232,7 @@ export async function recover(serverUrl: string, passphrase: string): Promise<bo
 		};
 
 		auth.set({ keypair, servers: {} });
+		unlockAuth(passphrase);
 
 		const regRes = await fetch(`${serverUrl}/api/auth/register`, {
 			method: 'POST',
@@ -224,6 +295,7 @@ export async function setPassphrase(passphrase: string): Promise<boolean> {
 			}),
 		});
 
+		unlockAuth(passphrase);
 		return res.ok;
 	} catch {
 		return false;
@@ -287,6 +359,7 @@ export async function refreshRole(): Promise<void> {
 export function logout() {
 	const server = getActiveServer();
 	if (!server) return;
+	sessionStorage.removeItem(SESSION_KEY);
 	auth.update((s) => {
 		const { [server]: _, ...rest } = s.servers;
 		return { ...s, servers: rest };

@@ -11,6 +11,8 @@ import init, {
 	encrypt_key_bundle,
 	decrypt_key_bundle,
 	compute_recovery_id,
+	generate_recovery_code,
+	hash_recovery_code,
 } from 'komun-wasm';
 
 let initialized = false;
@@ -29,7 +31,7 @@ export interface FullKeypair {
 	x25519SecretKey: string;
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
+export function bytesToBase64(bytes: Uint8Array): string {
 	return btoa(String.fromCharCode(...bytes));
 }
 
@@ -107,6 +109,17 @@ export async function computeRecoveryId(passphrase: string): Promise<string> {
 	return bytesToBase64(new Uint8Array(id));
 }
 
+export async function generateRecoveryCode(): Promise<string> {
+	await ensureInit();
+	return generate_recovery_code();
+}
+
+export async function hashRecoveryCode(code: string): Promise<string> {
+	await ensureInit();
+	const hash = hash_recovery_code(code);
+	return bytesToBase64(new Uint8Array(hash));
+}
+
 export async function deriveConversationKey(
 	mySecretKeyBase64: string,
 	theirPublicKeyBase64: string
@@ -136,6 +149,30 @@ export async function decryptMessage(
 	await ensureInit();
 	const data = base64ToBytes(encryptedBase64);
 	const key = base64ToBytes(sharedKeyBase64);
+	const plaintext = decrypt_with_shared_key(data, key);
+	return new TextDecoder().decode(new Uint8Array(plaintext));
+}
+
+export async function deriveWrapKey(passphrase: string, salt: string): Promise<string> {
+	await ensureInit();
+	const passphraseBytes = new TextEncoder().encode(passphrase);
+	const saltBytes = base64ToBytes(salt);
+	const derived = derive_key_from_passphrase(passphraseBytes, saltBytes);
+	return bytesToBase64(new Uint8Array(derived));
+}
+
+export async function wrapAuthState(state: string, wrapKeyBase64: string): Promise<string> {
+	await ensureInit();
+	const stateBytes = new TextEncoder().encode(state);
+	const key = base64ToBytes(wrapKeyBase64);
+	const encrypted = encrypt_with_shared_key(stateBytes, key);
+	return bytesToBase64(new Uint8Array(encrypted));
+}
+
+export async function unwrapAuthState(encryptedBase64: string, wrapKeyBase64: string): Promise<string> {
+	await ensureInit();
+	const data = base64ToBytes(encryptedBase64);
+	const key = base64ToBytes(wrapKeyBase64);
 	const plaintext = decrypt_with_shared_key(data, key);
 	return new TextDecoder().decode(new Uint8Array(plaintext));
 }
