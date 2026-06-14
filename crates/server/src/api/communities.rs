@@ -120,7 +120,7 @@ async fn update_community(
     if role.as_deref() != Some("admin") {
         return Ok(Json(serde_json::json!({"error": "admin access required"})));
     }
-    crate::db::communities::update_community(&state.pool, &slug, input.name, input.description, input.visibility).await?;
+    crate::db::communities::update_community(&state.pool, &slug, input.name, input.description, input.visibility, input.location_name, input.location_lat, input.location_lon).await?;
     Ok(Json(serde_json::json!({"status": "updated"})))
 }
 
@@ -129,6 +129,9 @@ struct UpdateCommunityRequest {
     name: Option<String>,
     description: Option<String>,
     visibility: Option<String>,
+    location_name: Option<String>,
+    location_lat: Option<f64>,
+    location_lon: Option<f64>,
 }
 
 async fn create_invite(

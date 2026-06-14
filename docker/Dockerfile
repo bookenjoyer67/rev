@@ -10,22 +10,21 @@ COPY migrations/ migrations/
 ENV SQLX_OFFLINE=true
 RUN cargo build --release --bin komun-server
 
-FROM node:22-slim AS frontend
-
-WORKDIR /web
-COPY web/package.json web/package-lock.json* ./
-RUN npm ci
-COPY web/ .
-RUN npm run build
-
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates wget && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r komun && useradd -r -g komun -d /tmp komun
 
 WORKDIR /app
-COPY --from=builder /app/target/release/komun-server ./
-COPY --from=frontend /web/build ./web/build
-COPY migrations/ migrations/
+COPY --from=builder --chown=komun:komun /app/target/release/komun-server ./
+COPY --chown=komun:komun migrations/ migrations/
 
-EXPOSE 3000
+RUN mkdir -p /app/data/relay && chown komun:komun /app/data/relay
+
+EXPOSE 3000 9001
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
+
+USER komun
 CMD ["./komun-server"]

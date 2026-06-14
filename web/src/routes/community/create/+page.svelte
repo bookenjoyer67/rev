@@ -9,6 +9,57 @@
 	let locationName = $state('');
 	let error = $state('');
 	let loading = $state(false);
+	let resolvedName: string | null = $state(null);
+	let resolvedLat: number | null = $state(null);
+	let resolvedLon: number | null = $state(null);
+	let geocoding = $state(false);
+	let debounceTimer: ReturnType<typeof setTimeout> | null = $state(null);
+
+	async function geocodeCoords(query: string): Promise<{ lat: number; lon: number; display_name: string } | null> {
+		try {
+			const res = await fetch(
+				`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`,
+				{ headers: { 'User-Agent': 'Komun/0.1 (mutual-aid-app)' } }
+			);
+			if (!res.ok) return null;
+			const results = await res.json();
+			if (results.length === 0) return null;
+			const r = results[0];
+			return {
+				lat: parseFloat(r.lat),
+				lon: parseFloat(r.lon),
+				display_name: r.display_name.split(',').slice(0, 2).join(',').trim(),
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	function handleLocationInput() {
+		if (debounceTimer) clearTimeout(debounceTimer);
+		const query = locationName.trim();
+		if (!query) {
+			resolvedName = null;
+			resolvedLat = null;
+			resolvedLon = null;
+			geocoding = false;
+			return;
+		}
+		geocoding = true;
+		debounceTimer = setTimeout(async () => {
+			const result = await geocodeCoords(query);
+			if (result) {
+				resolvedName = result.display_name;
+				resolvedLat = result.lat;
+				resolvedLon = result.lon;
+			} else {
+				resolvedName = null;
+				resolvedLat = null;
+				resolvedLon = null;
+			}
+			geocoding = false;
+		}, 500);
+	}
 
 	function slugify(s: string): string {
 		return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -32,6 +83,8 @@
 					slug: slug.trim(),
 					description: description.trim() || undefined,
 					location_name: locationName.trim() || undefined,
+					location_lat: resolvedLat,
+					location_lon: resolvedLon,
 				});
 				goto(`/c/${community.slug}`);
 			} catch (e: any) {
@@ -65,8 +118,23 @@
 
 		<label>
 			<span>Location (optional)</span>
-			<input type="text" bind:value={locationName} placeholder="East Oakland, CA" />
+			<input type="text" bind:value={locationName} oninput={handleLocationInput} placeholder="East Oakland, CA" />
 		</label>
+
+		{#if geocoding}
+			<p class="geo-feedback">Geocoding...</p>
+		{:else if resolvedLat != null && resolvedLon != null}
+			<div class="location-preview">
+				<span class="geo-feedback">Resolved to: {resolvedName}</span>
+				<iframe
+					title="Location preview"
+					src={`https://www.openstreetmap.org/export/embed.html?bbox=${resolvedLon - 0.01},${resolvedLat - 0.005},${resolvedLon + 0.01},${resolvedLat + 0.005}&layer=mapnik&marker=${resolvedLat},${resolvedLon}`}
+					class="map-preview"
+				></iframe>
+			</div>
+		{:else if locationName.trim() && !geocoding}
+			<p class="geo-feedback not-found">Location not found</p>
+		{/if}
 
 		{#if error}
 			<p class="error">{error}</p>
@@ -141,5 +209,28 @@
 	.error {
 		color: var(--critical);
 		font-size: 0.85rem;
+	}
+
+	.location-preview {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.geo-feedback {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		margin-top: -0.75rem;
+	}
+
+	.geo-feedback.not-found {
+		color: #b45309;
+	}
+
+	.map-preview {
+		width: 100%;
+		height: 200px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		margin-top: 0.4rem;
 	}
 </style>

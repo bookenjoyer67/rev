@@ -1,0 +1,31 @@
+# Secrets
+.env
+.env.local
+config.toml
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Build artifacts
+target/
+node_modules/
+web/build/
+web/.svelte-kit/
+crates/wasm/pkg/
+dist/
+data/relay/
+
+# IDE
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Docker
+docker-compose.override.yml
+
+# OS
+.DS_Store
+Thumbs.db

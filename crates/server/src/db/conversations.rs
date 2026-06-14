@@ -48,6 +48,7 @@ pub async fn create_match(
     responder_id: Uuid,
     initial_message: &str,
 ) -> Result<(Uuid, Uuid)> {
+    let mut tx = pool.begin().await?;
     let match_id = Uuid::now_v7();
     let message_id = Uuid::now_v7();
     let now = Utc::now();
@@ -60,7 +61,7 @@ pub async fn create_match(
     .bind(responder_id)
     .bind(initial_message)
     .bind(now)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
 
     sqlx::query(
@@ -71,8 +72,10 @@ pub async fn create_match(
     .bind(responder_id)
     .bind(initial_message)
     .bind(now)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     let post_author = sqlx::query_scalar::<_, Uuid>("SELECT author_id FROM posts WHERE id = $1")
         .bind(post_id)

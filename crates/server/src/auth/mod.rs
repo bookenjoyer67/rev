@@ -1,15 +1,20 @@
 use axum::{
     extract::{Request, State},
     http::{header, StatusCode},
-    middleware::Next,
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use base64::Engine;
 use chrono::{Duration, Utc};
+use ed25519_dalek::{Signature, VerifyingKey};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::LazyLock;
+use std::time::Instant as StdInstant;
+use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
 
 use crate::AppState;
@@ -28,6 +33,8 @@ pub struct RegisterRequest {
     encrypted_key_bundle: Option<String>,
     bundle_salt: Option<String>,
     recovery_id: Option<String>,
+    #[serde(default)]
+    recovery_code_hash: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -41,6 +48,8 @@ pub struct AuthResponse {
 #[derive(Deserialize)]
 pub struct RecoverRequest {
     recovery_id: String,
+    #[serde(default)]
+    recovery_code_hash: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -52,13 +61,39 @@ pub struct RecoverResponse {
     encryption_public_key: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct ChallengeRequest {
+    user_id: Uuid,
+}
+
+#[derive(Serialize)]
+struct ChallengeResponse {
+    challenge: String,
+}
+
+#[derive(Deserialize)]
+struct VerifyChallengeRequest {
+    user_id: Uuid,
+    challenge: String,
+    signature: String,
+}
+
+static CHALLENGES: LazyLock<TokioMutex<HashMap<Uuid, (Vec<u8>, StdInstant)>>> =
+    LazyLock::new(|| TokioMutex::new(HashMap::new()));
+
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let public = Router::new()
         .route("/register", post(register))
-        .route("/me", get(me))
         .route("/recover", post(recover))
+        .route("/me", get(me))
+        .route("/challenge", post(create_challenge))
+        .route("/verify-challenge", post(verify_challenge));
+
+    let protected = Router::new()
         .route("/users/{id}/keys", get(get_user_keys))
-        .with_state(state)
+        .layer(middleware::from_fn(require_auth));
+
+    public.merge(protected).with_state(state)
 }
 
 fn create_token(jwt_secret: &str, lifetime_days: u32, user_id: Uuid) -> Result<String, jsonwebtoken::errors::Error> {
@@ -117,6 +152,7 @@ async fn register(
     let bundle = input.encrypted_key_bundle.as_ref().and_then(|k| decode_b64(k).ok());
     let salt = input.bundle_salt.as_ref().and_then(|k| decode_b64(k).ok());
     let recovery = input.recovery_id.as_ref().and_then(|k| decode_b64(k).ok());
+    let recovery_code_hash_bytes = input.recovery_code_hash.as_ref().and_then(|k| decode_b64(k).ok());
 
     let err = |e: sqlx::Error| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()})))
@@ -128,32 +164,17 @@ async fn register(
         .await
         .map_err(err)?;
 
-    let user_id = if let Some(id) = existing {
-        sqlx::query(
-            r#"UPDATE users SET display_name = $2,
-               encryption_public_key = COALESCE($3, encryption_public_key),
-               encrypted_key_bundle = COALESCE($4, encrypted_key_bundle),
-               bundle_salt = COALESCE($5, bundle_salt),
-               recovery_id = COALESCE($6, recovery_id),
-               last_seen = now()
-               WHERE id = $1"#
-        )
-        .bind(id)
-        .bind(&input.display_name)
-        .bind(&encryption_pk)
-        .bind(&bundle)
-        .bind(&salt)
-        .bind(&recovery)
-        .execute(&state.pool)
-        .await
-        .map_err(err)?;
-        id
+    let user_id = if existing.is_some() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "account with this public key already exists"})),
+        ));
     } else {
         let id = Uuid::now_v7();
         sqlx::query(
             r#"INSERT INTO users (id, display_name, public_key, encryption_public_key,
-               encrypted_key_bundle, bundle_salt, recovery_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)"#
+               encrypted_key_bundle, bundle_salt, recovery_id, recovery_code_hash)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#
         )
         .bind(id)
         .bind(&input.display_name)
@@ -162,6 +183,7 @@ async fn register(
         .bind(&bundle)
         .bind(&salt)
         .bind(&recovery)
+        .bind(&recovery_code_hash_bytes)
         .execute(&state.pool)
         .await
         .map_err(err)?;
@@ -197,7 +219,7 @@ async fn recover(
 
     let row = sqlx::query_as::<_, RecoverRow>(
         r#"SELECT display_name, public_key, encryption_public_key,
-           encrypted_key_bundle, bundle_salt
+           encrypted_key_bundle, bundle_salt, recovery_code_hash
            FROM users WHERE recovery_id = $1"#
     )
     .bind(&recovery_id)
@@ -210,6 +232,15 @@ async fn recover(
         .ok_or((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "no recovery bundle stored"}))))?;
     let salt = row.bundle_salt
         .ok_or((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "no recovery salt stored"}))))?;
+
+    if let Some(ref stored_code_hash) = row.recovery_code_hash {
+        let provided = input.recovery_code_hash.as_ref()
+            .and_then(|h| decode_b64(h).ok())
+            .ok_or((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "recovery code required"}))))?;
+        if provided != *stored_code_hash {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid recovery code"}))));
+        }
+    }
 
     Ok(Json(RecoverResponse {
         encrypted_key_bundle: encode_b64(&bundle),
@@ -227,6 +258,62 @@ struct RecoverRow {
     encryption_public_key: Option<Vec<u8>>,
     encrypted_key_bundle: Option<Vec<u8>>,
     bundle_salt: Option<Vec<u8>>,
+    recovery_code_hash: Option<Vec<u8>>,
+}
+
+async fn create_challenge(
+    State(_state): State<AppState>,
+    Json(input): Json<ChallengeRequest>,
+) -> Result<Json<ChallengeResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let challenge_bytes: [u8; 32] = rand::random();
+    let challenge = encode_b64(&challenge_bytes);
+
+    let mut challenges = CHALLENGES.lock().await;
+    challenges.insert(input.user_id, (challenge_bytes.to_vec(), StdInstant::now() + std::time::Duration::from_secs(300)));
+
+    Ok(Json(ChallengeResponse { challenge }))
+}
+
+async fn verify_challenge(
+    State(state): State<AppState>,
+    Json(input): Json<VerifyChallengeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let (stored, expires) = {
+        let mut challenges = CHALLENGES.lock().await;
+        challenges.remove(&input.user_id)
+            .ok_or((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "no challenge found"}))))?
+    };
+
+    if StdInstant::now() > expires {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "challenge expired"}))));
+    }
+
+    let challenge_bytes = decode_b64(&input.challenge)?;
+    if challenge_bytes != stored {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "challenge mismatch"}))));
+    }
+
+    let sig_bytes = decode_b64(&input.signature)?;
+
+    let public_key: Vec<u8> = sqlx::query_scalar("SELECT public_key FROM users WHERE id = $1")
+        .bind(input.user_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?
+        .ok_or((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "user not found"}))))?;
+
+    let key: [u8; 32] = public_key.try_into()
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "invalid public key"}))))?;
+
+    let vk = VerifyingKey::from_bytes(&key)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "invalid public key"}))))?;
+
+    let sig = Signature::from_slice(&sig_bytes)
+        .map_err(|_| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid signature format"}))))?;
+
+    let verified = vk.verify_strict(&challenge_bytes, &sig).is_ok();
+
+    Ok(Json(serde_json::json!({"verified": verified})))
 }
 
 async fn me(
@@ -310,8 +397,14 @@ pub async fn require_auth(
     mut request: Request,
     next: Next,
 ) -> Response {
-    let jwt_secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "komun-dev-secret-change-in-production".into());
+    let jwt_secret = match std::env::var("JWT_SECRET") {
+        Ok(s) => s,
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "server configuration error"})))
+                .into_response();
+        }
+    };
 
     let user_id = match extract_user_id(&jwt_secret, &request) {
         Some(id) => id,
@@ -333,8 +426,14 @@ pub async fn require_superadmin(
     mut request: Request,
     next: Next,
 ) -> Response {
-    let jwt_secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "komun-dev-secret-change-in-production".into());
+    let jwt_secret = match std::env::var("JWT_SECRET") {
+        Ok(s) => s,
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "server configuration error"})))
+                .into_response();
+        }
+    };
 
     let user_id = match extract_user_id(&jwt_secret, &request) {
         Some(id) => id,

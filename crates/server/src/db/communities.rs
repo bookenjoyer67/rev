@@ -7,7 +7,7 @@ use komun_core::models::{Community, CreateCommunity, Invite, Visibility};
 
 pub async fn list(pool: &PgPool) -> Result<Vec<Community>> {
     let rows = sqlx::query_as::<_, CommunityRow>(
-        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, map_secret_key, created_at FROM communities ORDER BY created_at DESC"
+        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, created_at FROM communities ORDER BY created_at DESC"
     )
     .fetch_all(pool)
     .await?;
@@ -17,7 +17,7 @@ pub async fn list(pool: &PgPool) -> Result<Vec<Community>> {
 
 pub async fn get_by_slug(pool: &PgPool, slug: &str) -> Result<Community> {
     let row = sqlx::query_as::<_, CommunityRow>(
-        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, map_secret_key, created_at FROM communities WHERE slug = $1"
+        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, created_at FROM communities WHERE slug = $1"
     )
     .bind(slug)
     .fetch_optional(pool)
@@ -130,18 +130,27 @@ pub async fn update_community(
     name: Option<String>,
     description: Option<String>,
     visibility: Option<String>,
+    location_name: Option<String>,
+    location_lat: Option<f64>,
+    location_lon: Option<f64>,
 ) -> Result<()> {
     sqlx::query(
         r#"UPDATE communities SET
            name = COALESCE($2, name),
            description = COALESCE($3, description),
-           visibility = COALESCE($4, visibility)
+           visibility = COALESCE($4, visibility),
+           location_name = COALESCE($5, location_name),
+           location_lat = COALESCE($6, location_lat),
+           location_lon = COALESCE($7, location_lon)
            WHERE slug = $1"#
     )
     .bind(slug)
     .bind(name)
     .bind(description)
     .bind(visibility)
+    .bind(location_name)
+    .bind(location_lat)
+    .bind(location_lon)
     .execute(pool)
     .await?;
     Ok(())

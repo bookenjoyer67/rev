@@ -2,31 +2,62 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: komun
-      POSTGRES_PASSWORD: komun
-      POSTGRES_DB: komun
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${DB_USER:-komun}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-komun}
+      POSTGRES_DB: ${DB_NAME:-komun}
+    expose:
+      - "5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U komun"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-komun}"]
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '1'
 
   app:
     build:
       context: .
       dockerfile: docker/Dockerfile
     environment:
-      DATABASE_URL: postgres://komun:komun@db:5432/komun
+      DATABASE_URL: postgres://${DB_USER:-komun}:${DB_PASSWORD:-komun}@db:5432/${DB_NAME:-komun}
       BIND_ADDR: 0.0.0.0:3000
+      JWT_SECRET: ${JWT_SECRET}
+      KOMUN_CONFIG: /app/config.toml
     ports:
       - "3000:3000"
+      - "9001:9001"
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+      - relay_data:/app/data/relay
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '2'
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    init: true
 
 volumes:
   pgdata:
+  relay_data:

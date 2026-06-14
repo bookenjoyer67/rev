@@ -97,8 +97,9 @@
 			<p class="status">Searching for aid nearby...</p>
 		{:else if servers.length === 0}
 			<div class="empty">
-				<p>No communities found nearby.</p>
-				<p class="sub">Try a different location, or <a href="/connect">connect to a server directly</a>.</p>
+				<p>No communities found nearby. Be the first to organize mutual aid.</p>
+				<button class="start-btn" onclick={startCommunity}>Start a community</button>
+				<p class="sub">Or <a href="/connect">browse available servers</a> to join an existing one.</p>
 			</div>
 		{:else if filteredPosts.length === 0 && communities.length === 0}
 			<div class="empty">

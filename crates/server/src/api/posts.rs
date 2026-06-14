@@ -98,9 +98,13 @@ async fn update_post(
 
 async fn withdraw_post(
     State(state): State<AppState>,
-    Extension(_auth): Extension<AuthUser>,
+    Extension(auth): Extension<AuthUser>,
     Path((_slug, id)): Path<(String, uuid::Uuid)>,
 ) -> Result<Json<serde_json::Value>, StatusError> {
+    let post = crate::db::posts::get(&state.pool, id).await?;
+    if post.author_id != auth.user_id {
+        return Ok(Json(serde_json::json!({"error": "not your post"})));
+    }
     crate::db::posts::withdraw(&state.pool, id).await?;
     Ok(Json(serde_json::json!({"status": "withdrawn"})))
 }

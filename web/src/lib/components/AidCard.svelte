@@ -48,7 +48,12 @@
 	<div class="footer">
 		<div class="origin">
 			<span class="community">{post.community_name}</span>
-			<span class="server">{post.server_name}</span>
+			<span class="server">
+				{post.server_name}
+				{#if post.server_location}
+					<span class="server-loc"> &middot; {post.server_location}</span>
+				{/if}
+			</span>
 		</div>
 
 		{#if post.author_id !== myUserId}

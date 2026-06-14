@@ -104,10 +104,23 @@ struct UpdateStatusRequest {
 
 async fn update_status(
     State(state): State<AppState>,
-    Extension(_auth): Extension<AuthUser>,
+    Extension(auth): Extension<AuthUser>,
     Path(match_id): Path<Uuid>,
     Json(input): Json<UpdateStatusRequest>,
 ) -> Result<Json<serde_json::Value>, StatusError> {
+    let participant = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM matches m JOIN posts p ON p.id = m.post_id WHERE m.id = $1 AND ($2 = m.responder_id OR $2 = p.author_id))"
+    )
+    .bind(match_id)
+    .bind(auth.user_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(false);
+
+    if !participant {
+        return Ok(Json(serde_json::json!({"error": "not a participant"})));
+    }
+
     crate::db::conversations::update_status(&state.pool, match_id, &input.status).await?;
     Ok(Json(serde_json::json!({"status": input.status})))
 }

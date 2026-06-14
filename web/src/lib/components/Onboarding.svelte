@@ -6,24 +6,40 @@
 	let showPassphrase = $state(false);
 	let error = $state('');
 	let loading = $state(false);
+	let recoveryCode = $state('');
+	let showRecovery = $state(false);
 
 	async function handleSubmit() {
 		if (!displayName.trim()) {
 			error = 'Enter a name';
 			return;
 		}
+		if (passphrase && passphrase.length < 12) {
+			error = 'Passphrase must be at least 12 characters';
+			return;
+		}
 		loading = true;
 		error = '';
-		const ok = await register(
+		const result = await register(
 			displayName.trim(),
 			passphrase.trim() || undefined
 		);
 		loading = false;
-		if (ok) {
-			onAuthComplete();
+		if (result.ok) {
+			if (result.recoveryCode) {
+				recoveryCode = result.recoveryCode;
+				showRecovery = true;
+			} else {
+				onAuthComplete();
+			}
 		} else {
 			error = 'Registration failed. Try again.';
 		}
+	}
+
+	function finishRecovery() {
+		showRecovery = false;
+		onAuthComplete();
 	}
 
 	function close() {
@@ -35,44 +51,52 @@
 <div class="overlay" role="dialog" aria-modal="true">
 	<div class="modal">
 		<button class="close-btn" onclick={close} aria-label="Close">&times;</button>
-		<h2>Create your identity</h2>
-		<p>Your identity is a cryptographic keypair. No email or password needed.</p>
 
-		<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
-			<input
-				type="text"
-				placeholder="What should people call you?"
-				bind:value={displayName}
-				disabled={loading}
-				maxlength="50"
-			/>
+		{#if showRecovery}
+			<h2>Save your recovery code</h2>
+			<p class="hint">Write these 12 words down. You will need them to recover your account if you lose your passphrase. They cannot be recovered if lost.</p>
+			<div class="recovery-code">{recoveryCode}</div>
+			<button class="submit-btn" onclick={finishRecovery}>I've saved my recovery code</button>
+		{:else}
+			<h2>Create your identity</h2>
+			<p>Your identity is a cryptographic keypair. No email or password needed.</p>
 
-			{#if !showPassphrase}
-				<button type="button" class="passphrase-toggle" onclick={() => showPassphrase = true}>
-					Set a recovery passphrase (recommended)
+			<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
+				<input
+					type="text"
+					placeholder="What should people call you?"
+					bind:value={displayName}
+					disabled={loading}
+					maxlength="50"
+				/>
+
+				{#if !showPassphrase}
+					<button type="button" class="passphrase-toggle" onclick={() => showPassphrase = true}>
+						Set a recovery passphrase (recommended)
+					</button>
+				{:else}
+					<div class="passphrase-section">
+						<label>
+							<span>Recovery passphrase (min 12 characters)</span>
+							<input
+								type="password"
+								placeholder="A memorable phrase for key recovery"
+								bind:value={passphrase}
+								disabled={loading}
+							/>
+						</label>
+						<p class="hint">This encrypts your keys so you can recover them from any device. Without it, losing this device means losing your identity.</p>
+					</div>
+				{/if}
+
+				{#if error}
+					<p class="error">{error}</p>
+				{/if}
+				<button type="submit" class="submit-btn" disabled={loading}>
+					{loading ? 'Creating...' : 'Create Identity'}
 				</button>
-			{:else}
-				<div class="passphrase-section">
-					<label>
-						<span>Recovery passphrase</span>
-						<input
-							type="password"
-							placeholder="A memorable phrase for key recovery"
-							bind:value={passphrase}
-							disabled={loading}
-						/>
-					</label>
-					<p class="hint">This encrypts your keys so you can recover them from any device. Without it, losing this device means losing your identity.</p>
-				</div>
-			{/if}
-
-			{#if error}
-				<p class="error">{error}</p>
-			{/if}
-			<button type="submit" class="submit-btn" disabled={loading}>
-				{loading ? 'Creating...' : 'Create Identity'}
-			</button>
-		</form>
+			</form>
+		{/if}
 	</div>
 </div>
 {/if}
@@ -181,4 +205,18 @@
 	.submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 	.error { color: var(--critical); font-size: 0.85rem; margin: 0; }
+
+	.recovery-code {
+		background: var(--bg-elevated);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		padding: 1rem;
+		font-family: monospace;
+		font-size: 1.1rem;
+		line-height: 1.8;
+		text-align: center;
+		word-spacing: 0.5rem;
+		margin: 1rem 0;
+		user-select: all;
+	}
 </style>

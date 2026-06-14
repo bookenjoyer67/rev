@@ -113,7 +113,9 @@
 <div class="container">
 	<header class="page-header">
 		<h1>Mutual Aid</h1>
-		<a href="/aid/new" class="btn btn-primary">Post</a>
+		{#if communities.length > 0}
+			<a href="/aid/new" class="btn btn-primary">Post</a>
+		{/if}
 	</header>
 
 	{#if communities.length > 1}

@@ -5,16 +5,17 @@ mod db;
 mod relay_bridge;
 mod relay_ops;
 mod repl;
+mod security_headers;
 mod tasks;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::Router;
+use axum::{http::HeaderValue, middleware, Router};
 use config::Config;
 use sqlx::postgres::PgPoolOptions;
 use tower_http::{
-    cors::CorsLayer,
+    cors::{AllowOrigin, CorsLayer},
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -76,9 +77,31 @@ async fn main() {
 
     tasks::spawn_background_tasks(state.clone());
 
+    let allowed_origins = &state.config.security.allowed_origins;
+    let cors = if allowed_origins == "*" {
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::any())
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
+    } else {
+        let origins: Vec<HeaderValue> = allowed_origins
+            .split(',')
+            .filter_map(|s| {
+                let trimmed = s.trim();
+                if trimmed.is_empty() { None }
+                else { HeaderValue::from_str(trimmed).ok() }
+            })
+            .collect();
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
+    };
+
     let app = Router::new()
         .nest("/api", api::router(state.clone()))
-        .layer(CorsLayer::permissive())
+        .layer(cors)
+        .layer(middleware::from_fn(security_headers::security_headers))
         .layer(TraceLayer::new_for_http());
 
     let bind = config.bind_addr();

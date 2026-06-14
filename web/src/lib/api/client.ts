@@ -44,12 +44,12 @@ export const api = {
 		list: () => request<any[]>('/communities'),
 		get: (slug: string) => request<any>(`/communities/${slug}`, { auth: true }),
 		members: (slug: string) => request<any[]>(`/communities/${slug}/members`),
-		update: (slug: string, data: { name?: string; description?: string; visibility?: string }) =>
+		update: (slug: string, data: { name?: string; description?: string; visibility?: string; location_name?: string | null; location_lat?: number | null; location_lon?: number | null }) =>
 			request<any>(`/communities/${slug}`, { method: 'PATCH', body: JSON.stringify(data), auth: true }),
 		listInvites: (slug: string) => request<any[]>(`/communities/${slug}/invites`, { auth: true }),
 		deleteInvite: (slug: string, code: string) =>
 			request<any>(`/communities/${slug}/invites/${code}`, { method: 'DELETE', auth: true }),
-		create: (data: { name: string; slug: string; description?: string; location_name?: string }) =>
+		create: (data: { name: string; slug: string; description?: string; location_name?: string; location_lat?: number | null; location_lon?: number | null }) =>
 			request<any>('/communities', {
 				method: 'POST',
 				body: JSON.stringify(data),

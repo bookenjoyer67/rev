@@ -36,7 +36,7 @@
 	async function savePassphrase() {
 		if (!passphrase) { passphraseError = 'Enter a passphrase'; return; }
 		if (passphrase !== passphraseConfirm) { passphraseError = 'Passphrases do not match'; return; }
-		if (passphrase.length < 4) { passphraseError = 'Passphrase is too short'; return; }
+		if (passphrase.length < 12) { passphraseError = 'Passphrase must be at least 12 characters'; return; }
 		passphraseSaving = true;
 		passphraseError = '';
 		const ok = await setPassphrase(passphrase);

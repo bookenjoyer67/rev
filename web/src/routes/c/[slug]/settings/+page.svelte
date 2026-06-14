@@ -11,12 +11,66 @@
 	let name = $state('');
 	let description = $state('');
 	let visibility = $state('federated');
+	let locationName = $state('');
+	let locationLat: number | null = $state(null);
+	let locationLon: number | null = $state(null);
+	let resolvedName: string | null = $state(null);
+	let resolvedLat: number | null = $state(null);
+	let resolvedLon: number | null = $state(null);
+	let geocoding = $state(false);
+	let debounceTimer: ReturnType<typeof setTimeout> | null = $state(null);
 	let invites: Invite[] = $state([]);
 	let loading = $state(true);
 	let saving = $state(false);
 	let saved = $state(false);
 	let error = $state('');
 	let slug = $state('');
+
+	async function geocodeCoords(query: string): Promise<{ lat: number; lon: number; display_name: string } | null> {
+		try {
+			const res = await fetch(
+				`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`,
+				{ headers: { 'User-Agent': 'Komun/0.1 (mutual-aid-app)' } }
+			);
+			if (!res.ok) return null;
+			const results = await res.json();
+			if (results.length === 0) return null;
+			const r = results[0];
+			return {
+				lat: parseFloat(r.lat),
+				lon: parseFloat(r.lon),
+				display_name: r.display_name.split(',').slice(0, 2).join(',').trim(),
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	function handleLocationInput() {
+		if (debounceTimer) clearTimeout(debounceTimer);
+		const query = locationName.trim();
+		if (!query) {
+			resolvedName = null;
+			resolvedLat = null;
+			resolvedLon = null;
+			geocoding = false;
+			return;
+		}
+		geocoding = true;
+		debounceTimer = setTimeout(async () => {
+			const result = await geocodeCoords(query);
+			if (result) {
+				resolvedName = result.display_name;
+				resolvedLat = result.lat;
+				resolvedLon = result.lon;
+			} else {
+				resolvedName = null;
+				resolvedLat = null;
+				resolvedLon = null;
+			}
+			geocoding = false;
+		}, 500);
+	}
 
 	onMount(async () => {
 		if (!isConnected() || !isAuthenticated()) { goto('/'); return; }
@@ -27,6 +81,14 @@
 			name = community.name;
 			description = community.description || '';
 			visibility = community.visibility;
+			locationName = community.location_name || '';
+			locationLat = community.location_lat ?? null;
+			locationLon = community.location_lon ?? null;
+			if (community.location_lat != null && community.location_lon != null) {
+				resolvedLat = community.location_lat;
+				resolvedLon = community.location_lon;
+				resolvedName = community.location_name || null;
+			}
 			invites = await api.communities.listInvites(slug);
 		} catch { goto(`/c/${slug}`); }
 		loading = false;
@@ -36,7 +98,16 @@
 		saving = true;
 		error = '';
 		try {
-			await api.communities.update(slug, { name: name.trim(), description: description.trim() || undefined, visibility });
+			await api.communities.update(slug, {
+				name: name.trim(),
+				description: description.trim() || undefined,
+				visibility,
+				location_name: locationName.trim() || null,
+				location_lat: resolvedLat,
+				location_lon: resolvedLon,
+			});
+			locationLat = resolvedLat;
+			locationLon = resolvedLon;
 			saved = true;
 			setTimeout(() => saved = false, 2000);
 		} catch (e: any) { error = e.message; }
@@ -78,6 +149,26 @@
 				<span>Description</span>
 				<textarea bind:value={description} rows="3"></textarea>
 			</label>
+			<label>
+				<span>Location (optional)</span>
+				<input type="text" bind:value={locationName} oninput={handleLocationInput} placeholder="East Oakland, CA" />
+			</label>
+
+			{#if geocoding}
+				<p class="geo-feedback">Geocoding...</p>
+			{:else if resolvedLat != null && resolvedLon != null}
+				<div class="location-preview">
+					<span class="geo-feedback">Resolved to: {resolvedName || locationName.trim()}</span>
+					<iframe
+						title="Location preview"
+						src={`https://www.openstreetmap.org/export/embed.html?bbox=${resolvedLon - 0.01},${resolvedLat - 0.005},${resolvedLon + 0.01},${resolvedLat + 0.005}&layer=mapnik&marker=${resolvedLat},${resolvedLon}`}
+						class="map-preview"
+					></iframe>
+				</div>
+			{:else if locationName.trim() && !geocoding}
+				<p class="geo-feedback not-found">Location not found</p>
+			{/if}
+
 			<label>
 				<span>Visibility</span>
 				<select bind:value={visibility}>
@@ -147,4 +238,27 @@
 
 	.error { color: var(--critical); font-size: 0.85rem; }
 	.status { text-align: center; color: var(--text-muted); padding: 3rem 0; }
+
+	.location-preview {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.geo-feedback {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		margin-top: -0.5rem;
+	}
+
+	.geo-feedback.not-found {
+		color: #b45309;
+	}
+
+	.map-preview {
+		width: 100%;
+		height: 200px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		margin-top: 0.4rem;
+	}
 </style>

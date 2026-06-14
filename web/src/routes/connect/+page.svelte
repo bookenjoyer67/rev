@@ -1,16 +1,29 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 	import { connectToServer, serverState, type NodeInfo } from '$lib/stores/server';
 	import { recover } from '$lib/stores/auth';
+	import { discoverAllServers, type NearbyServer } from '$lib/api/discovery';
 
 	let url = $state('');
 	let error = $state('');
 	let loading = $state(false);
 	let nodeInfo: NodeInfo | null = $state(null);
+	let browseServers: NearbyServer[] = $state([]);
+	let browseLoading = $state(false);
 
 	let showRecover = $state(false);
+
+	onMount(async () => {
+		browseLoading = true;
+		try {
+			browseServers = await discoverAllServers();
+		} catch { browseServers = []; }
+		browseLoading = false;
+	});
 	let recoverUrl = $state('');
 	let recoverPassphrase = $state('');
+	let recoverCode = $state('');
 	let recoverError = $state('');
 	let recoverLoading = $state(false);
 	let recoverSuccess = $state(false);
@@ -20,7 +33,7 @@
 		if (!recoverPassphrase.trim()) { recoverError = 'Enter your passphrase'; return; }
 		recoverLoading = true;
 		recoverError = '';
-		const ok = await recover(recoverUrl.trim().replace(/\/+$/, ''), recoverPassphrase);
+		const ok = await recover(recoverUrl.trim().replace(/\/+$/, ''), recoverPassphrase, recoverCode.trim() || undefined);
 		recoverLoading = false;
 		if (ok) {
 			recoverSuccess = true;
@@ -57,6 +70,33 @@
 	<div class="connect-page">
 		<h1>komun</h1>
 		<p class="tagline">Connect to a server to browse communities and mutual aid.</p>
+
+		{#if browseLoading}
+			<p class="browse-status">Loading available servers...</p>
+		{:else if browseServers.length > 0}
+			<div class="available-servers">
+				<h3>Available servers</h3>
+				<ul>
+					{#each browseServers as server}
+						<li>
+							<button class="server-entry" onclick={() => connectToKnown(server.url)}>
+								<div class="server-info">
+									<strong>{server.name}</strong>
+									{#if server.description}
+										<span class="server-desc">{server.description}</span>
+									{/if}
+									<span class="server-meta">
+										{#if server.location_name}{server.location_name} &middot; {/if}
+										{server.communities_count} communit{server.communities_count === 1 ? 'y' : 'ies'}
+									</span>
+								</div>
+								<span class="server-connect">Connect</span>
+							</button>
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
 
 		<form onsubmit={(e) => { e.preventDefault(); handleConnect(); }}>
 			<input
@@ -113,6 +153,7 @@
 				<form onsubmit={(e) => { e.preventDefault(); handleRecover(); }}>
 					<input type="url" bind:value={recoverUrl} placeholder="https://server-url" disabled={recoverLoading} />
 					<input type="password" bind:value={recoverPassphrase} placeholder="Your recovery passphrase" disabled={recoverLoading} />
+					<input type="text" bind:value={recoverCode} placeholder="Recovery code (12 words, if set)" disabled={recoverLoading} />
 					{#if recoverError}
 						<p class="error">{recoverError}</p>
 					{/if}
@@ -300,5 +341,72 @@
 		color: var(--text-muted);
 		font-size: 0.8rem;
 		margin-top: 2rem;
+	}
+
+	.browse-status {
+		color: var(--text-muted);
+		font-size: 0.85rem;
+		margin-bottom: 1.5rem;
+	}
+
+	.available-servers {
+		text-align: left;
+		margin-bottom: 1.5rem;
+	}
+
+	.available-servers h3 {
+		font-size: 0.9rem;
+		color: var(--text-muted);
+		margin-bottom: 0.5rem;
+		text-align: left;
+	}
+
+	.available-servers ul { list-style: none; }
+
+	.available-servers li { margin-bottom: 0.4rem; }
+
+	.server-entry {
+		width: 100%;
+		text-align: left;
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		padding: 0.7rem 0.8rem;
+		color: var(--text);
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.server-entry:hover { border-color: var(--accent); }
+
+	.server-info {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		min-width: 0;
+	}
+
+	.server-info strong { font-size: 0.95rem; }
+
+	.server-desc {
+		color: var(--text-muted);
+		font-size: 0.8rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.server-meta {
+		color: var(--text-muted);
+		font-size: 0.75rem;
+	}
+
+	.server-connect {
+		color: var(--accent);
+		font-weight: 600;
+		font-size: 0.85rem;
+		flex-shrink: 0;
 	}
 </style>
