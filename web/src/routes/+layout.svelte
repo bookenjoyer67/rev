@@ -2,7 +2,7 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import Onboarding from '$lib/components/Onboarding.svelte';
-	import { auth, isAuthenticated, getToken, refreshRole } from '$lib/stores/auth';
+	import { auth, isAuthenticated, getToken, refreshRole, initAuth } from '$lib/stores/auth';
 	import { serverState, getActiveServer } from '$lib/stores/server';
 
 	let { children } = $props();
@@ -17,6 +17,8 @@
 		online = navigator.onLine;
 		window.addEventListener('online', () => { online = true; offlineDismissed = false; });
 		window.addEventListener('offline', () => { online = false; offlineDismissed = false; });
+
+		initAuth();
 
 		if (!window.matchMedia('(display-mode: standalone)').matches) {
 			window.addEventListener('beforeinstallprompt', (e: Event) => {
