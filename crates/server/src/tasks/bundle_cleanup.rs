@@ -17,7 +17,7 @@ pub async fn bundle_cleanup_loop(state: AppState) {
 async fn cleanup_bundles(state: &AppState) -> anyhow::Result<()> {
     let result = sqlx::query(
         r#"UPDATE users SET encrypted_key_bundle = NULL, bundle_salt = NULL
-           WHERE last_seen < now() - interval '30 days'
+           WHERE last_seen < now() - interval '90 days'
            AND encrypted_key_bundle IS NOT NULL"#
     )
     .execute(&state.pool)
