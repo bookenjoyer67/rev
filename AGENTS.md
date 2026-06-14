@@ -92,3 +92,28 @@ Two services: `db` (postgres:16-alpine) and `app` (the Rust binary). Ports 5432 
 ## Tests
 
 There are currently no automated tests. Manual verification is done by running the server and frontend.
+
+## Security Model
+
+### Threat Model
+- **Attacker capabilities:** Network observer, compromised relay node, XSS via user-generated content, disk access to server
+- **Out of scope:** Physical device compromise, supply chain attacks on dependencies, quantum adversaries
+
+### Crypto Boundaries
+- **Client-side (WASM):** ed25519 key generation/signing, x25519 ECDH, ChaCha20Poly1305 encryption, Argon2 key derivation, BIP39 recovery codes
+- **Server-side:** JWT HS256, TLS termination
+- **Never leaves client:** ed25519 secret key, x25519 secret key, passphrase, recovery code (only Argon2 hash sent to server)
+- **Server stores:** Public keys, encrypted key bundles, recovery_id (Argon2 hash), recovery_code_hash (Argon2 hash)
+
+### Key Hierarchy
+1. Passphrase → Argon2 → wrap key → decrypts key bundle (ed25519 secret + x25519 secret)
+2. ed25519 key → signs challenges → JWT token (includes role claim)
+3. x25519 key → ECDH → conversation encryption keys (ChaCha20Poly1305)
+4. Recovery code (BIP39 12 words) → Argon2 → recovery_code_hash → server verifies
+
+### Auth Flow
+1. Client generates ed25519 + x25519 keypair in WASM
+2. Server issues challenge → client signs with ed25519 → server verifies → JWT issued
+3. JWT contains user_id (sub) and role — no DB query needed for authorization
+4. Optional: passphrase encrypts key bundle for server-side recovery
+5. Optional: BIP39 recovery code as backup identity factor
