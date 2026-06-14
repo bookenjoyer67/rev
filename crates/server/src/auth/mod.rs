@@ -138,7 +138,10 @@ async fn register(
     )
     .fetch_one(&state.pool)
     .await
-    .unwrap_or(0);
+    .map_err(|e| {
+        tracing::error!("rate limit query failed: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"})))
+    })?;
 
     if recent_registrations >= state.config.auth.max_registrations_per_hour as i64 {
         return Err((

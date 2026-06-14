@@ -28,7 +28,7 @@ pub struct AppState {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| "komun_server=info,tower_http=info".into()))
@@ -38,6 +38,16 @@ async fn main() {
     dotenvy::dotenv().ok();
 
     let config = Config::load().expect("failed to load configuration");
+
+    match std::env::var("JWT_SECRET") {
+        Ok(jwt) if jwt.len() < 32 => {
+            anyhow::bail!("JWT_SECRET is too short (< 32 chars). Generate with: openssl rand -base64 48");
+        }
+        Err(_) => {
+            anyhow::bail!("JWT_SECRET environment variable must be set");
+        }
+        _ => {}
+    }
 
     std::env::set_var("JWT_SECRET", &config.auth.jwt_secret);
 
@@ -118,4 +128,6 @@ async fn main() {
     } else {
         server.await.unwrap();
     }
+
+    Ok(())
 }
