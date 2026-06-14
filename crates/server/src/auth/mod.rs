@@ -23,6 +23,7 @@ use crate::AppState;
 struct Claims {
     sub: String,
     exp: i64,
+    role: String,
 }
 
 #[derive(Deserialize)]
@@ -96,11 +97,12 @@ pub fn router(state: AppState) -> Router {
     public.merge(protected).with_state(state)
 }
 
-fn create_token(jwt_secret: &str, lifetime_days: u32, user_id: Uuid) -> Result<String, jsonwebtoken::errors::Error> {
+fn create_token(jwt_secret: &str, lifetime_days: u32, user_id: Uuid, role: &str) -> Result<String, jsonwebtoken::errors::Error> {
     let exp = Utc::now() + Duration::days(lifetime_days as i64);
     let claims = Claims {
         sub: user_id.to_string(),
         exp: exp.timestamp(),
+        role: role.to_string(),
     };
     encode(
         &Header::default(),
@@ -203,6 +205,7 @@ async fn register(
         &state.config.auth.jwt_secret,
         state.config.auth.token_lifetime_days,
         user_id,
+        &role,
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
 
@@ -425,7 +428,7 @@ pub async fn require_auth(
 }
 
 pub async fn require_superadmin(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     mut request: Request,
     next: Next,
 ) -> Response {
@@ -438,33 +441,23 @@ pub async fn require_superadmin(
         }
     };
 
-    let user_id = match extract_user_id(&jwt_secret, &request) {
-        Some(id) => id,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "authentication required"})),
-            )
-                .into_response();
-        }
+    let header = request.headers().get(header::AUTHORIZATION);
+    let token = header.and_then(|h| h.to_str().ok()).and_then(|v| v.strip_prefix("Bearer "));
+    let token = match token {
+        Some(t) => t,
+        None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "authentication required"}))).into_response(),
     };
 
-    let role = sqlx::query_scalar::<_, String>("SELECT role FROM users WHERE id = $1")
-        .bind(user_id)
-        .fetch_optional(&state.pool)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default();
+    let claims = match decode::<Claims>(token, &DecodingKey::from_secret(jwt_secret.as_bytes()), &Validation::default()) {
+        Ok(data) => data.claims,
+        Err(_) => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "invalid token"}))).into_response(),
+    };
 
-    if role != "superadmin" {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error": "superadmin access required"})),
-        )
-            .into_response();
+    if claims.role != "superadmin" {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "superadmin access required"}))).into_response();
     }
 
+    let user_id = Uuid::parse_str(&claims.sub).unwrap_or(Uuid::nil());
     request.extensions_mut().insert(AuthUser { user_id });
     next.run(request).await
 }
