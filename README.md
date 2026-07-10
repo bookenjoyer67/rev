@@ -1,136 +1,150 @@
 # Komun
 
-Federated mutual aid discovery platform. Communities post needs, offers,
-and resources — then match them through encrypted conversations.
+Federated mutual aid discovery platform. Communities post needs, offers, and resources. Encrypted conversations match people who can help.
 
-Komun is one component of the intercommunal software ecosystem, alongside
-[Sweeet](https://github.com/user/sweeet) (community logistics) and
-[piggPin](https://github.com/user/team-pins) (spatial mesh relay).
-
-## What it does
-
-A community running Komun can:
-
-- **Post needs and offers.** Food, housing, transport, childcare, tools.
-- **Match automatically.** Offers get routed to matching needs.
-- **Converse securely.** End-to-end encrypted threads between matched parties.
-- **Discover other communities.** Federated directory so mutual aid networks
-  can find each other.
-- **Operate a relay.** Built-in piggPin map relay for spatial coordination.
+AGPL-3.0.
 
 ## Architecture
 
 ```
-Browser (SvelteKit SPA + WASM crypto)
-        |
-    HTTPS + WSS
-        |
-  ┌─────┴──────────────────────┐
-  │     Komun Node              │
-  │                              │
-  │  Axum HTTP API ──────────┐   │
-  │  WebSocket Relay ────────┤   │
-  │  PostgreSQL ─────────────┤   │
-  │  JWT Auth ───────────────┤   │
-  │  Federation Engine ──────┤   │
-  └──────────────────────────┘   │
-              ↕ P2P              │
-  ┌──────────────────────────┐   │
-  │     Other Komun Nodes    │   │
-  │     Sweeet Instances     │   │
-  │     piggPin Peers        │   │
-  └──────────────────────────┘   │
+Browser (SvelteKit SPA)
+        │
+        ▼
+┌─────────────────┐     ┌──────────────┐
+│  Axum HTTP API  │────▶│  PostgreSQL   │
+│  (port 3000)    │     │               │
+│                 │     └──────────────┘
+│  ┌───────────┐  │
+│  │ piggPin   │  │──── WebSocket relay
+│  │ relay     │  │     (port 9001)
+│  └───────────┘  │
+└─────────────────┘
+        │
+   ┌────┴────┐
+   │  WASM   │  Client-side crypto
+   │  crypto │  (ed25519, x25519,
+   └─────────┘   ChaCha20, Argon2)
 ```
 
-- **Backend:** Rust (Axum 0.8), PostgreSQL, SQLx
-- **Frontend:** SvelteKit SPA, static adapter, PWA
-- **Crypto:** Client-side WASM (ed25519, x25519, ChaCha20Poly1305, Argon2)
-- **Auth:** Challenge-response with ed25519 signing, JWT tokens
-- **Federation:** P2P mesh with capability advertisement
+## Crates
 
-## Security model
+| Crate | Purpose |
+|-------|---------|
+| `crates/core` | Shared data models (Community, Post, Member, MatchThread) |
+| `crates/server` | Axum HTTP API, JWT auth, DB queries, relay bridge, REPL |
+| `crates/wasm` | Client-side crypto compiled to WASM (ed25519, x25519, ChaCha20Poly1305, Argon2, BIP39) |
+| `crates/relay` | piggPin WebSocket map relay — real-time location sharing per community |
 
-Secret keys and passphrases never leave the client. The server stores only
-public keys and encrypted key bundles. All conversation encryption is
-end-to-end via x25519 ECDH + ChaCha20Poly1305.
+## Quickstart
 
-See [AGENTS.md](AGENTS.md) for the full security model and threat analysis.
+### Requirements
 
-## Quick start
+- Rust (stable)
+- Node.js 18+
+- PostgreSQL 16
+- wasm-pack (`cargo install wasm-pack`)
 
-Requirements: Rust 1.80+, Node.js 20+, PostgreSQL 16+
+### Local dev
 
 ```bash
-# Start the database
+git clone https://git.komun.buzz/Book-Enjoyer/rev.git
+cd rev
+
+# Start PostgreSQL
 docker compose up db -d
-
-# Build WASM crypto module
-wasm-pack build crates/wasm --target web
-
-# Build the frontend
-cd web && npm install && npm run build && cd ..
 
 # Copy and edit config
 cp config.example.toml config.toml
-# Edit config.toml — set node.name, database.url, auth.jwt_secret
+
+# Set up the database
+createdb komun
+# or: docker compose exec db createdb -U komun komun
+
+# Build WASM crypto
+wasm-pack build crates/wasm --target web
+
+# Build frontend
+cd web && npm install && npm run build && cd ..
 
 # Run
-cargo run --release --bin komun-server
+cargo run --bin komun-server
 ```
 
-Open http://localhost:3000
+Opens on `http://localhost:3000`.
 
-### Docker
+### Docker (full stack)
 
 ```bash
+cp config.example.toml config.toml
+# edit config.toml — set database.url, auth.jwt_secret, etc.
 docker compose up --build
 ```
 
-## Configuration
+## Security Model
 
-See `config.example.toml` for all options — every value is documented.
-Key sections:
+### Crypto boundaries
 
-| Section | What it controls |
-|---------|-----------------|
-| `[server]` | Bind address, port |
-| `[database]` | PostgreSQL connection, pool size |
-| `[node]` | Community name, description, location |
-| `[discovery]` | Directory listing, federation registration |
-| `[auth]` | JWT secret, token lifetime, rate limits |
-| `[federation]` | P2P mesh enablement, domain, alliances |
-| `[security]` | Rate limits, CORS origins |
-| `[relay]` | piggPin WebSocket map relay |
-| `[posts]` | Default TTL for needs/offers/resources |
+- **Client-side (WASM):** ed25519 key generation/signing, x25519 ECDH, ChaCha20Poly1305 encryption, Argon2 key derivation, BIP39 recovery codes
+- **Server-side:** JWT HS256, TLS termination
+- **Never leaves client:** ed25519 secret key, x25519 secret key, passphrase, recovery code
+- **Server stores:** Public keys, encrypted key bundles, recovery_id (Argon2 hash), recovery_code_hash
 
-## Project structure
+### Key hierarchy
+
+1. Passphrase → Argon2 → wrap key → decrypts key bundle
+2. ed25519 key → signs challenges → JWT token (includes role claim)
+3. x25519 key → ECDH → conversation encryption keys (ChaCha20Poly1305)
+4. Recovery code (BIP39 12 words) → Argon2 → recovery_code_hash → server verifies
+
+### Auth flow
+
+1. Client generates ed25519 + x25519 keypair in WASM
+2. Server issues challenge → client signs with ed25519 → server verifies → JWT issued
+3. JWT contains user_id (sub) and role — no DB query needed for authorization
+4. Optional: passphrase encrypts key bundle for server-side recovery
+5. Optional: BIP39 recovery code as backup identity factor
+
+## Project layout
 
 ```
 rev/
-├── Cargo.toml              # Workspace
-├── config.example.toml      # Documented config template
-├── docker-compose.yml       # PostgreSQL + app
-├── Dockerfile               # Multi-stage build
 ├── crates/
-│   ├── core/                # Shared data models (Community, Member, Post)
-│   ├── server/              # Axum HTTP API, DB, auth, tasks
-│   ├── wasm/                # Client-side crypto (ed25519, x25519, Argon2)
-│   └── relay/               # piggPin WebSocket map relay
-├── web/                     # SvelteKit SPA frontend (PWA)
-├── migrations/              # SQLx migrations
-└── scripts/                 # Utility scripts
+│   ├── core/src/models/     Data models (Community, Post, Member, etc.)
+│   ├── server/src/
+│   │   ├── api/             REST endpoints (communities, posts, conversations)
+│   │   ├── auth/            JWT, challenge-auth, middleware
+│   │   ├── db/              Database queries per entity
+│   │   ├── config.rs        Configuration (TOML + env overrides)
+│   │   └── tasks/           Background jobs (bundle cleanup, expiry)
+│   ├── wasm/src/            Crypto compiled to WASM
+│   └── relay/src/           piggPin WebSocket map relay
+├── web/                     SvelteKit 5 SPA (static adapter)
+├── migrations/              SQLx migrations (numbered, additive)
+├── docker/                  Multi-stage Dockerfile
+├── config.example.toml      Documented config template
+└── scripts/                 Utility scripts
 ```
 
-## Federation
+## Tests
 
-Komun speaks the Intercommunal Federation Protocol — the same protocol
-used by Sweeet and piggPin. Communities discover each other, share surplus,
-and coordinate cross-community aid without a central platform.
+```bash
+cargo test --workspace
+```
 
-See [Sweeet docs/PROTOCOL.md](../sweeet/docs/PROTOCOL.md) for the spec.
+110 tests across the workspace. Server tests cover auth tokens, challenge flow, config parsing. Core tests cover model serialization/deserialization and type safety.
+
+DB integration tests need a running PostgreSQL instance and `DATABASE_URL` set in the environment.
+
+## Conventions
+
+- UUIDv7 for all primary keys (time-sortable)
+- `cargo check` must pass before committing
+- Migrations are additive — never edit existing migration files
+- Secret keys never logged, never stored server-side in plaintext
+- `config.toml` and `.env` are gitignored — use `config.example.toml` as reference
+- Svelte 5 runes only: `$state()`, `$derived()`, `$effect()`, `$props()`, `onclick={handler}`
+- No `$:`, `export let`, or `on:click`
 
 ## License
 
 AGPL-3.0-or-later. See [LICENSE](LICENSE).
-
-The empire can't fork and close. If they use it, they release their changes.

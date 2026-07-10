@@ -7,6 +7,8 @@ mod relay_ops;
 mod repl;
 mod security_headers;
 mod tasks;
+#[cfg(test)]
+mod tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -31,3 +31,7 @@ komun-relay = { path = "../relay", default-features = false }
 dashmap = "6"
 futures-util = "0.3"
 socket2 = "0.5"
+
+[dev-dependencies]
+toml = "0.8"
+rand_core = "0.6"
