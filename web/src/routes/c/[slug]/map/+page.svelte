@@ -2,11 +2,13 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { isConnected, getActiveServer } from '$lib/stores/server';
+	import { isConnected, getActiveServer, resolveSlug } from '$lib/stores/server';
 	import { auth } from '$lib/stores/auth';
 	import { api } from '$lib/api/client';
 
 	let slug = $state('');
+	let localSlug = $state('');
+	let serverUrl = $state('');
 	let relayUrl = $state('');
 	let serverLat: number | null = $state(null);
 	let serverLon: number | null = $state(null);
@@ -25,8 +27,17 @@
 	}
 
 	onMount(async () => {
-		if (!isConnected()) { goto('/connect'); return; }
-		slug = $page.params.slug as string;
+		const rawSlug = $page.params.slug as string;
+		slug = rawSlug;
+		let resolved;
+		try {
+			resolved = await resolveSlug(rawSlug);
+			localSlug = resolved.localSlug;
+			serverUrl = resolved.serverUrl;
+		} catch {
+			goto('/connect');
+			return;
+		}
 		const server = getActiveServer();
 		if (server) {
 			try {
@@ -42,7 +53,7 @@
 		}
 
 		try {
-			const community = await api.communities.get(slug);
+			const community = await api.communities.get(localSlug);
 			if (community.map_community_id) {
 				mapCommunityId = community.map_community_id;
 				communityName = community.name;
@@ -63,7 +74,7 @@
 					payload.zoom = '15';
 				}
 				const b64 = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-				iframeSrc = `https://app.piggpin.space/?embed=1#community=${b64}`;
+				iframeSrc = `https://localhost:5174/?embed=1#community=${b64}`;
 			}
 		} catch (e: any) {
 			error = e.message || 'Failed to load community map data';
@@ -73,11 +84,11 @@
 	});
 
 	function handleMessage(event: MessageEvent) {
-		if (event.origin !== 'https://app.piggpin.space') return;
+		if (event.origin !== 'https://localhost:5174') return;
 		const msg = event.data;
 		if (msg?.type === 'piggpin:ready' && displayName) {
 			const iframe = document.querySelector('iframe');
-			iframe?.contentWindow?.postMessage({ type: 'komun:identity', displayName }, 'https://app.piggpin.space');
+			iframe?.contentWindow?.postMessage({ type: 'komun:identity', displayName }, 'https://localhost:5174');
 		}
 	}
 </script>
@@ -105,7 +116,7 @@
 			src={iframeSrc}
 			title="Community Map"
 			allow="geolocation; clipboard-write"
-			sandbox="allow-scripts allow-popups allow-forms"
+			sandbox="allow-scripts allow-popups allow-forms allow-same-origin"
 		></iframe>
 	{/if}
 </div>
@@ -149,6 +160,6 @@
 	}
 
 	.status.error {
-		color: #dc2626;
+		color: var(--critical);
 	}
 </style>

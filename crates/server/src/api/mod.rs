@@ -5,6 +5,7 @@ mod posts;
 mod health;
 mod node;
 mod notifications;
+mod geocode;
 pub mod directory;
 
 use axum::Router;
@@ -14,6 +15,7 @@ use crate::auth;
 
 pub fn router(state: AppState) -> Router {
     let mut r = Router::new()
+        .route("/geocode", axum::routing::get(geocode::geocode))
         .merge(health::router())
         .merge(node::router(state.clone()))
         .merge(conversations::router(state.clone()))

@@ -18,7 +18,7 @@ pub fn router(state: AppState) -> Router {
         .route("/conversations/{match_id}", get(get_conversation))
         .route("/conversations/{match_id}/messages", post(send_message))
         .route("/conversations/{match_id}/status", patch(update_status))
-        .layer(middleware::from_fn(require_auth))
+        .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .with_state(state)
 }
 

@@ -1,6 +1,7 @@
 import init, {
 	generate_keypair,
 	generate_x25519_keypair,
+	sign,
 	encrypt_message,
 	decrypt_message,
 	derive_shared_key,
@@ -83,6 +84,17 @@ export async function createKeyBundle(
 		salt: bytesToBase64(salt),
 		recoveryId: bytesToBase64(new Uint8Array(recoveryIdBytes)),
 	};
+}
+
+export async function signRegisterChallenge(ed25519SecretKey: string): Promise<{ challenge: string; signature: string }> {
+	await ensureInit();
+	const challenge = new Uint8Array(32);
+	crypto.getRandomValues(challenge);
+	const challengeB64 = bytesToBase64(challenge);
+	const payload = new TextEncoder().encode('komun-register:' + challengeB64);
+	const secretKey = base64ToBytes(ed25519SecretKey);
+	const sig = sign(payload, secretKey);
+	return { challenge: challengeB64, signature: bytesToBase64(new Uint8Array(sig)) };
 }
 
 export async function recoverFromBundle(

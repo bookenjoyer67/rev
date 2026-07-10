@@ -8,6 +8,7 @@ struct NodeInfo {
     name: String,
     description: String,
     version: String,
+    domain: Option<String>,
     location: Option<NodeLocation>,
     communities_count: i64,
     listed: bool,
@@ -47,10 +48,19 @@ async fn get_node_info(State(state): State<AppState>) -> Json<NodeInfo> {
         None
     };
 
+    let domain = config.federation.domain.clone()
+        .or_else(|| config.node.public_url.as_ref()
+            .and_then(|url| url.strip_prefix("https://")
+                .or_else(|| url.strip_prefix("http://")))
+            .and_then(|rest| rest.split('/').next())
+            .and_then(|host| host.split(':').next())
+            .map(String::from));
+
     Json(NodeInfo {
         name: config.node.name.clone(),
         description: config.node.description.clone(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        domain,
         location,
         communities_count,
         listed: config.discovery.listed,

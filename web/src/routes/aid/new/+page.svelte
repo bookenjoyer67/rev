@@ -74,7 +74,7 @@
 									payload.zoom = '10';
 								}
 								const b64 = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-								mapIframeSrc = `https://app.piggpin.space/?embed=1&picker=1#community=${b64}`;
+							mapIframeSrc = `https://localhost:5174/?embed=1&picker=1#community=${b64}`;
 								break;
 							}
 						} catch (_) {}
@@ -86,7 +86,7 @@
 
 	function handlePickMessage(event: MessageEvent) {
 		console.log('[rev] ANY msg:', event.origin, typeof event.data, event.data?.type);
-		if (event.origin !== 'https://app.piggpin.space') return;
+		if (event.origin !== 'https://localhost:5174') return;
 		console.log('[rev] pick message:', event.data);
 		if (event.data?.type === 'piggpin:location-picked') {
 			locationLat = event.data.lat;
@@ -107,7 +107,7 @@
 					category,
 					urgency: kind === 'need' ? urgency : null,
 					contact: contactMethod
-				}, 'https://app.piggpin.space');
+				}, 'https://localhost:5174');
 			} catch (_) {}
 		}
 	}
@@ -134,7 +134,7 @@
 				sendPinDetails();
 				const iframe = document.querySelector('iframe');
 				if (iframe?.contentWindow) {
-					try { iframe.contentWindow.postMessage({ type: 'komun:submit' }, 'https://app.piggpin.space'); } catch (_) {}
+					try { iframe.contentWindow.postMessage({ type: 'komun:submit' }, 'https://localhost:5174'); } catch (_) {}
 				}
 				goto(`/c/${selectedCommunity}`);
 			} catch (e: any) {
@@ -240,7 +240,7 @@
 						src={mapIframeSrc}
 						title="Pick a location on the map"
 						allow="geolocation; clipboard-write"
-						sandbox="allow-scripts allow-popups"
+					sandbox="allow-scripts allow-popups allow-same-origin"
 					></iframe>
 				{/if}
 			</div>
@@ -369,7 +369,7 @@
 
 	button[type="submit"] {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.75rem;
 		border-radius: var(--radius);
 		font-weight: 600;

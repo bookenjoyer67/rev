@@ -25,6 +25,6 @@ pub fn spawn_background_tasks(state: AppState) {
 
     {
         let s = state.clone();
-        tokio::spawn(bundle_cleanup::bundle_cleanup_loop(s));
+        tokio::spawn(bundle_cleanup::user_cleanup_loop(s));
     }
 }

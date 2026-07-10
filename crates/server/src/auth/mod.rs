@@ -30,11 +30,23 @@ struct Claims {
 pub struct RegisterRequest {
     display_name: String,
     public_key: String,
+    challenge: String,
+    signature: String,
     encryption_public_key: Option<String>,
     encrypted_key_bundle: Option<String>,
     bundle_salt: Option<String>,
     recovery_id: Option<String>,
     #[serde(default)]
+    recovery_code_hash: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateProfileRequest {
+    display_name: Option<String>,
+    encryption_public_key: Option<String>,
+    encrypted_key_bundle: Option<String>,
+    bundle_salt: Option<String>,
+    recovery_id: Option<String>,
     recovery_code_hash: Option<String>,
 }
 
@@ -87,12 +99,13 @@ pub fn router(state: AppState) -> Router {
         .route("/register", post(register))
         .route("/recover", post(recover))
         .route("/me", get(me))
+        .route("/me", axum::routing::put(update_profile))
         .route("/challenge", post(create_challenge))
         .route("/verify-challenge", post(verify_challenge));
 
     let protected = Router::new()
         .route("/users/{id}/keys", get(get_user_keys))
-        .layer(middleware::from_fn(require_auth));
+        .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     public.merge(protected).with_state(state)
 }
@@ -153,6 +166,24 @@ async fn register(
     }
 
     let public_key = decode_b64(&input.public_key)?;
+    let _challenge = decode_b64(&input.challenge)?;
+    let sig_bytes = decode_b64(&input.signature)?;
+
+    let pk: [u8; 32] = public_key.clone().try_into()
+        .map_err(|_| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid public key"}))))?;
+    let vk = VerifyingKey::from_bytes(&pk)
+        .map_err(|_| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid public key"}))))?;
+    let sig = Signature::from_slice(&sig_bytes)
+        .map_err(|_| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid signature format"}))))?;
+
+    let payload = format!("komun-register:{}", input.challenge);
+    if vk.verify_strict(payload.as_bytes(), &sig).is_err() {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "invalid signature — key ownership proof failed"})),
+        ));
+    }
+
     let encryption_pk = input.encryption_public_key.as_ref().and_then(|k| decode_b64(k).ok());
     let bundle = input.encrypted_key_bundle.as_ref().and_then(|k| decode_b64(k).ok());
     let salt = input.bundle_salt.as_ref().and_then(|k| decode_b64(k).ok());
@@ -169,11 +200,38 @@ async fn register(
         .await
         .map_err(err)?;
 
-    let user_id = if existing.is_some() {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({"error": "account with this public key already exists"})),
-        ));
+    let user_id = if let Some(id) = existing {
+        sqlx::query("UPDATE users SET display_name = $1, last_seen = now() WHERE id = $2")
+            .bind(&input.display_name)
+            .bind(id)
+            .execute(&state.pool)
+            .await
+            .map_err(err)?;
+
+        if let Some(ref epk_bytes) = encryption_pk {
+            sqlx::query("UPDATE users SET encryption_public_key = $1 WHERE id = $2")
+                .bind(epk_bytes)
+                .bind(id)
+                .execute(&state.pool)
+                .await
+                .map_err(err)?;
+        }
+
+        if bundle.is_some() || salt.is_some() || recovery.is_some() {
+            sqlx::query(
+                "UPDATE users SET encrypted_key_bundle = $1, bundle_salt = $2, recovery_id = $3, recovery_code_hash = $4 WHERE id = $5"
+            )
+            .bind(&bundle)
+            .bind(&salt)
+            .bind(&recovery)
+            .bind(&recovery_code_hash_bytes)
+            .bind(id)
+            .execute(&state.pool)
+            .await
+            .map_err(err)?;
+        }
+
+        id
     } else {
         let id = Uuid::now_v7();
         sqlx::query(
@@ -346,6 +404,63 @@ async fn me(
     }))
 }
 
+async fn update_profile(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(input): Json<UpdateProfileRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    let user_id = token
+        .and_then(|t| verify_token(&state.config.auth.jwt_secret, t))
+        .ok_or((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "not authenticated"})),
+        ))?;
+
+    let display_name = input.display_name;
+    let encryption_pk = input.encryption_public_key
+        .as_ref()
+        .and_then(|k| if k.is_empty() { None } else { decode_b64(k).ok() });
+    let bundle = input.encrypted_key_bundle
+        .as_ref()
+        .and_then(|k| if k.is_empty() { None } else { decode_b64(k).ok() });
+    let salt = input.bundle_salt
+        .as_ref()
+        .and_then(|k| if k.is_empty() { None } else { decode_b64(k).ok() });
+    let recovery = input.recovery_id
+        .as_ref()
+        .and_then(|k| if k.is_empty() { None } else { decode_b64(k).ok() });
+    let recovery_code_hash = input.recovery_code_hash
+        .as_ref()
+        .and_then(|k| if k.is_empty() { None } else { decode_b64(k).ok() });
+
+    sqlx::query(
+        "UPDATE users SET display_name = COALESCE($1, display_name),
+         encryption_public_key = COALESCE($2, encryption_public_key),
+         encrypted_key_bundle = COALESCE($3, encrypted_key_bundle),
+         bundle_salt = COALESCE($4, bundle_salt),
+         recovery_id = COALESCE($5, recovery_id),
+         recovery_code_hash = COALESCE($6, recovery_code_hash),
+         last_seen = now()
+         WHERE id = $7"
+    )
+    .bind(&display_name)
+    .bind(&encryption_pk)
+    .bind(&bundle)
+    .bind(&salt)
+    .bind(&recovery)
+    .bind(&recovery_code_hash)
+    .bind(user_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
 #[derive(sqlx::FromRow)]
 struct UserRow {
     id: Uuid,
@@ -400,6 +515,7 @@ pub struct AuthUser {
 }
 
 pub async fn require_auth(
+    State(state): State<AppState>,
     mut request: Request,
     next: Next,
 ) -> Response {
@@ -423,12 +539,34 @@ pub async fn require_auth(
         }
     };
 
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
+        .bind(user_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(false);
+
+    if !exists {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "user not found"})),
+        )
+            .into_response();
+    }
+
+    let pool = state.pool.clone();
+    tokio::spawn(async move {
+        let _ = sqlx::query("UPDATE users SET last_seen = now() WHERE id = $1")
+            .bind(user_id)
+            .execute(&pool)
+            .await;
+    });
+
     request.extensions_mut().insert(AuthUser { user_id });
     next.run(request).await
 }
 
 pub async fn require_superadmin(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     mut request: Request,
     next: Next,
 ) -> Response {
@@ -453,11 +591,21 @@ pub async fn require_superadmin(
         Err(_) => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "invalid token"}))).into_response(),
     };
 
-    if claims.role != "superadmin" {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "superadmin access required"}))).into_response();
+    let user_id = Uuid::parse_str(&claims.sub).unwrap_or(Uuid::nil());
+
+    let db_role: Option<String> = sqlx::query_scalar("SELECT role FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+
+    match db_role {
+        Some(ref role) if role == "superadmin" => {}
+        _ => {
+            return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "superadmin access required"}))).into_response();
+        }
     }
 
-    let user_id = Uuid::parse_str(&claims.sub).unwrap_or(Uuid::nil());
     request.extensions_mut().insert(AuthUser { user_id });
     next.run(request).await
 }

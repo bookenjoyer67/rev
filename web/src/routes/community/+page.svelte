@@ -75,7 +75,7 @@
 
 	.btn-primary {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.5rem 1rem;
 		border-radius: var(--radius);
 		font-weight: 600;

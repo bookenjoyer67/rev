@@ -14,8 +14,8 @@
 			error = 'Enter a name';
 			return;
 		}
-		if (passphrase && passphrase.length < 12) {
-			error = 'Passphrase must be at least 12 characters';
+		if (passphrase && passphrase.length < 6) {
+			error = 'Passphrase must be at least 6 characters';
 			return;
 		}
 		loading = true;
@@ -77,7 +77,7 @@
 				{:else}
 					<div class="passphrase-section">
 						<label>
-							<span>Recovery passphrase (min 12 characters)</span>
+							<span>Recovery passphrase (min 6 characters)</span>
 							<input
 								type="password"
 								placeholder="A memorable phrase for key recovery"
@@ -105,7 +105,7 @@
 	.overlay {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.7);
+		background: var(--overlay);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -195,7 +195,7 @@
 
 	.submit-btn {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.75rem;
 		border-radius: var(--radius);
 		font-weight: 600;

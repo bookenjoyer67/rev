@@ -3,6 +3,8 @@
 	import { goto } from '$app/navigation';
 	import { auth, getActiveAuth, getPublicKey, isAuthenticated, setPassphrase, updateDisplayName, logout } from '$lib/stores/auth';
 	import { isConnected, serverState, disconnectServer, removeServer } from '$lib/stores/server';
+	import { themeName } from '$lib/stores/theme';
+	import ThemePicker from '$lib/components/ThemePicker.svelte';
 
 	let displayName = $state('');
 	let passphrase = $state('');
@@ -14,6 +16,7 @@
 	let error = $state('');
 	let passphraseError = $state('');
 	let copied = $state(false);
+	let showTheme = $state(false);
 
 	let publicKey = $derived(getPublicKey() || '');
 	let hasBundle = $derived(!!$auth.keypair?.ed25519SecretKey);
@@ -36,7 +39,7 @@
 	async function savePassphrase() {
 		if (!passphrase) { passphraseError = 'Enter a passphrase'; return; }
 		if (passphrase !== passphraseConfirm) { passphraseError = 'Passphrases do not match'; return; }
-		if (passphrase.length < 12) { passphraseError = 'Passphrase must be at least 12 characters'; return; }
+		if (passphrase.length < 6) { passphraseError = 'Passphrase must be at least 6 characters'; return; }
 		passphraseSaving = true;
 		passphraseError = '';
 		const ok = await setPassphrase(passphrase);
@@ -104,6 +107,14 @@
 	</section>
 
 	<section class="section">
+		<h2>Theme</h2>
+		<div class="theme-pick-row">
+			<span class="current-theme">{$themeName}</span>
+			<button class="change-btn" onclick={() => showTheme = true}>Change</button>
+		</div>
+	</section>
+
+	<section class="section">
 		<h2>Connected Servers</h2>
 		{#if $serverState.known.length === 0}
 			<p class="hint">No servers connected.</p>
@@ -130,6 +141,8 @@
 	</section>
 </div>
 
+<ThemePicker shown={showTheme} onClose={() => showTheme = false} />
+
 <style>
 	h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
 	h2 { font-size: 1.1rem; margin-bottom: 0.5rem; }
@@ -146,7 +159,7 @@
 	input { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem; color: var(--text); font-size: 1rem; }
 	input:focus { outline: none; border-color: var(--accent); }
 
-	.save-btn { background: var(--accent); color: white; padding: 0.6rem; border-radius: var(--radius); font-weight: 600; }
+	.save-btn { background: var(--accent); color: var(--text-on-accent); padding: 0.6rem; border-radius: var(--radius); font-weight: 600; }
 	.save-btn:disabled { opacity: 0.6; }
 
 	.key-display {
@@ -176,7 +189,7 @@
 	}
 
 	.server-url { display: block; color: var(--text-muted); font-size: 0.75rem; }
-	.active-badge { font-size: 0.65rem; color: var(--success); background: #2ec4b615; padding: 0.1rem 0.4rem; border-radius: 4px; margin-left: 0.4rem; }
+	.active-badge { font-size: 0.65rem; color: var(--success); background: var(--success-softer); padding: 0.1rem 0.4rem; border-radius: 4px; margin-left: 0.4rem; }
 	.remove-btn { background: none; color: var(--critical); font-size: 0.8rem; padding: 0.2rem 0.5rem; border: 1px solid var(--critical); border-radius: var(--radius); }
 
 	.error { color: var(--critical); font-size: 0.85rem; }
@@ -184,5 +197,30 @@
 
 	.danger-zone { border-bottom: none; }
 	.logout-btn { background: none; color: var(--critical); padding: 0.6rem 1rem; border: 1px solid var(--critical); border-radius: var(--radius); font-weight: 600; }
-	.logout-btn:hover { background: #e6394620; }
+	.logout-btn:hover { background: var(--critical-soft); }
+
+	.theme-pick-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.current-theme {
+		color: var(--text);
+		font-weight: 500;
+		font-size: 0.95rem;
+	}
+
+	.change-btn {
+		background: var(--bg-elevated);
+		color: var(--text);
+		padding: 0.35rem 0.75rem;
+		border-radius: var(--radius);
+		font-size: 0.8rem;
+		border: 1px solid var(--border);
+	}
+
+	.change-btn:hover {
+		border-color: var(--accent);
+	}
 </style>

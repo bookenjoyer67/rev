@@ -215,7 +215,7 @@
 
 	button[type="submit"] {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.75rem;
 		border-radius: var(--radius);
 		font-weight: 600;

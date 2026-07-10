@@ -16,7 +16,7 @@ pub fn router(state: AppState) -> Router {
         .route("/me/notifications/count", get(unread_count))
         .route("/me/notifications/{id}/read", patch(mark_read))
         .route("/me/notifications/read-all", post(mark_all_read))
-        .layer(middleware::from_fn(require_auth))
+        .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .with_state(state)
 }
 

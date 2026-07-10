@@ -85,6 +85,6 @@
 		border-radius: 4px;
 	}
 
-	.status-accepted { background: #2ec4b620; color: var(--success); }
-	.status-pending { background: #f4a26120; color: var(--warning); }
+	.status-accepted { background: var(--success-soft); color: var(--success); }
+	.status-pending { background: var(--warning-soft); color: var(--warning); }
 </style>

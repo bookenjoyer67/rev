@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use chrono::Utc;
+use serde_json::Value as JsonValue;
 use sqlx::{FromRow, PgPool, Row};
 use uuid::Uuid;
 
@@ -7,7 +8,7 @@ use komun_core::models::{Community, CreateCommunity, Invite, Visibility};
 
 pub async fn list(pool: &PgPool) -> Result<Vec<Community>> {
     let rows = sqlx::query_as::<_, CommunityRow>(
-        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, created_at FROM communities ORDER BY created_at DESC"
+        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, map_secret_key, created_at FROM communities ORDER BY created_at DESC"
     )
     .fetch_all(pool)
     .await?;
@@ -17,7 +18,7 @@ pub async fn list(pool: &PgPool) -> Result<Vec<Community>> {
 
 pub async fn get_by_slug(pool: &PgPool, slug: &str) -> Result<Community> {
     let row = sqlx::query_as::<_, CommunityRow>(
-        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, created_at FROM communities WHERE slug = $1"
+        "SELECT id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, map_secret_key, created_at FROM communities WHERE slug = $1"
     )
     .bind(slug)
     .fetch_optional(pool)
@@ -52,6 +53,31 @@ pub async fn create(pool: &PgPool, input: CreateCommunity, map_community_id: Opt
     .await?;
 
     get_by_slug(pool, &input.slug).await
+}
+
+pub async fn refresh_directory_communities(pool: &PgPool, server_url: &str) -> Result<()> {
+    let communities_json: Option<JsonValue> = sqlx::query_scalar(
+        r#"SELECT jsonb_agg(jsonb_build_object(
+            'slug', slug, 'name', name,
+            'location_name', location_name,
+            'location_lat', location_lat,
+            'location_lon', location_lon
+        ) ORDER BY name)
+        FROM communities
+        WHERE location_lat IS NOT NULL AND location_lon IS NOT NULL"#
+    )
+    .fetch_one(pool)
+    .await?;
+
+    sqlx::query(
+        "UPDATE directory_entries SET community_locations = $1, last_seen = now() WHERE url = $2"
+    )
+    .bind(&communities_json)
+    .bind(server_url)
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 pub async fn create_invite(pool: &PgPool, community_id: Uuid, created_by: Uuid) -> Result<Invite> {

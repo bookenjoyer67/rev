@@ -3,7 +3,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { auth } from '$lib/stores/auth';
-	import { getActiveServer } from '$lib/stores/server';
+	import { getActiveServer, resolveSlug, parseSlug } from '$lib/stores/server';
 	import RespondModal from '$lib/components/RespondModal.svelte';
 
 	import { requireAuth } from '$lib/stores/auth';
@@ -92,18 +92,24 @@
 	const kindLabels: Record<string, string> = { resource: 'Resource', need: 'Need', offer: 'Offer' };
 	const urgencyColors: Record<string, string> = { critical: 'var(--critical)', high: 'var(--warning)', medium: 'var(--text-muted)', low: 'var(--text-muted)' };
 
+	let localSlug = $state('');
+	let serverUrl = $state('');
+
 	$effect(() => {
-		const slug = $page.params.slug;
-		if (slug) load(slug);
+		const rawSlug = $page.params.slug;
+		if (rawSlug) load(rawSlug);
 	});
 
-	async function load(slug: string) {
+	async function load(rawSlug: string) {
 		loading = true;
 		error = '';
 		try {
-			community = await api.communities.get(slug);
-			await loadPosts(slug);
-			members = await api.communities.members(slug);
+			const resolved = await resolveSlug(rawSlug);
+			localSlug = resolved.localSlug;
+			serverUrl = resolved.serverUrl;
+			community = await api.communities.get(localSlug);
+			await loadPosts(localSlug);
+			members = await api.communities.members(localSlug);
 		} catch (e: any) {
 			error = e.message || 'Community not found';
 		} finally {
@@ -153,12 +159,12 @@
 				{/if}
 			</div>
 			<div class="header-actions">
-				<a href="/c/{community.slug}/map" class="btn-map">Map</a>
+				<a href="/c/{localSlug}@{serverUrl.replace(/^https?:\/\//, '').split('/')[0].split(':')[0]}/map" class="btn-map">Map</a>
 				{#if community.is_member}
 					<a href="/aid/new" class="btn-post">Post</a>
 				{/if}
 				{#if community.member_role === 'admin'}
-					<a href="/c/{community.slug}/settings" class="btn-settings">Settings</a>
+					<a href="/c/{localSlug}@{serverUrl.replace(/^https?:\/\//, '').split('/')[0].split(':')[0]}/settings" class="btn-settings">Settings</a>
 				{/if}
 			</div>
 		</header>
@@ -286,13 +292,13 @@
 	.header-actions { display: flex; gap: 0.5rem; }
 
 	.btn-map {
-		background: #6366f120;
-		color: #818cf8;
+		background: var(--kind-resource-soft);
+		color: var(--kind-resource);
 		padding: 0.5rem 1rem;
 		border-radius: var(--radius);
 		font-weight: 600;
 		font-size: 0.9rem;
-		border: 1px solid #818cf8;
+		border: 1px solid var(--kind-resource);
 	}
 
 	.btn-map:hover { text-decoration: none; }
@@ -321,7 +327,7 @@
 
 	.join-form { display: flex; gap: 0.5rem; }
 	.join-form input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.75rem; color: var(--text); font-size: 0.9rem; }
-	.join-btn { background: var(--accent); color: white; padding: 0.5rem 1rem; border-radius: var(--radius); font-weight: 600; font-size: 0.9rem; }
+	.join-btn { background: var(--accent); color: var(--text-on-accent); padding: 0.5rem 1rem; border-radius: var(--radius); font-weight: 600; font-size: 0.9rem; }
 	.join-btn:disabled { opacity: 0.6; }
 	.join-error { color: var(--critical); font-size: 0.8rem; margin-top: 0.5rem; }
 
@@ -357,7 +363,7 @@
 
 	.btn-post {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.5rem 1rem;
 		border-radius: var(--radius);
 		font-weight: 600;
@@ -418,9 +424,9 @@
 		font-size: 0.7rem;
 	}
 
-	.kind-need { background: #e6394620; color: var(--critical); }
-	.kind-offer { background: #2ec4b620; color: var(--success); }
-	.kind-resource { background: #6366f120; color: #818cf8; }
+	.kind-need { background: var(--kind-need-soft); color: var(--critical); }
+	.kind-offer { background: var(--kind-offer-soft); color: var(--success); }
+	.kind-resource { background: var(--kind-resource-soft); color: var(--kind-resource); }
 
 	.category { color: var(--text-muted); text-transform: capitalize; }
 	.urgency { font-weight: 600; text-transform: uppercase; }
@@ -441,7 +447,7 @@
 
 	.respond-btn {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.4rem 0.8rem;
 		border-radius: var(--radius);
 		font-weight: 600;
@@ -463,9 +469,9 @@
 		border: 1px solid;
 	}
 
-	.action-btn.fulfill { background: #2ec4b615; color: var(--success); border-color: var(--success); }
+	.action-btn.fulfill { background: var(--success-softer); color: var(--success); border-color: var(--success); }
 	.action-btn.edit { background: var(--bg-elevated); color: var(--text-muted); border-color: var(--border); }
-	.action-btn.delete { background: #e6394610; color: var(--critical); border-color: var(--critical); }
+	.action-btn.delete { background: var(--critical-softer); color: var(--critical); border-color: var(--critical); }
 
 	.fulfilled-badge {
 		font-size: 0.75rem;
@@ -492,7 +498,7 @@
 	}
 
 	.edit-actions { display: flex; gap: 0.4rem; }
-	.save-btn { background: var(--accent); color: white; padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; font-weight: 600; }
+	.save-btn { background: var(--accent); color: var(--text-on-accent); padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; font-weight: 600; }
 	.cancel-btn { background: var(--bg-elevated); color: var(--text-muted); padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; border: 1px solid var(--border); }
 
 	.members-toggle {

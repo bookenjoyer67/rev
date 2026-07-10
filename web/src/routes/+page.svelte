@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import LocationBar from '$lib/components/LocationBar.svelte';
 	import AidCard from '$lib/components/AidCard.svelte';
-	import { location, hasLocation } from '$lib/stores/location';
+	import { location, hasLocation, getLocation } from '$lib/stores/location';
 	import { isConnected, connectToServer } from '$lib/stores/server';
 	import { discoverNearbyServers, fetchFromServers, type AggregatedPost, type NearbyServer, type DiscoveredCommunity } from '$lib/api/discovery';
 
@@ -26,7 +26,9 @@
 		try {
 			servers = await discoverNearbyServers();
 			if (servers.length > 0) {
-				const result = await fetchFromServers(servers);
+				const loc = getLocation();
+				const result = await fetchFromServers(servers,
+					loc.lat && loc.lon ? { lat: loc.lat, lon: loc.lon, radiusKm: 50 } : undefined);
 				posts = result.posts;
 				communities = result.communities;
 			} else {
@@ -112,7 +114,8 @@
 				<p>Found {communities.length} communit{communities.length > 1 ? 'ies' : 'y'} nearby, but no posts yet.</p>
 				<div class="community-links">
 					{#each communities as comm}
-						<a href="/c/{comm.slug}" class="community-link" onclick={() => connectToServer(comm.server_url)}>
+						{@const domain = comm.server_url.replace(/^https?:\/\//, '').split('/')[0].split(':')[0]}
+						<a href="/c/{comm.slug}@{domain}" class="community-link" onclick={() => connectToServer(comm.server_url)}>
 							{comm.name}
 						</a>
 					{/each}
@@ -242,7 +245,7 @@
 
 	.start-btn {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.75rem 1.5rem;
 		border-radius: var(--radius);
 		font-weight: 600;

@@ -138,7 +138,7 @@
 	.overlay {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.7);
+		background: var(--overlay);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -209,7 +209,7 @@
 
 	.btn-primary {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.75rem;
 		border-radius: var(--radius);
 		font-weight: 600;

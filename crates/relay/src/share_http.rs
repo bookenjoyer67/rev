@@ -283,10 +283,6 @@ pub async fn handle_http(state: Arc<AppState>, mut stream: TcpStream) {
                 let _ = stream.write_all(&resp).await;
             }
         }
-        _ => {
-            let body = include_str!("share_page.html");
-            let resp = http_response("200 OK", "text/html", body.as_bytes(), allowed_origin, req_origin);
-            let _ = stream.write_all(&resp).await;
-        }
+        _ => {}
     }
 }

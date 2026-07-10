@@ -1,6 +1,16 @@
 import { getDirectories } from '$lib/stores/directories';
 import { getLocation } from '$lib/stores/location';
 
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+	const R = 6371;
+	const dLat = (lat2 - lat1) * Math.PI / 180;
+	const dLon = (lon2 - lon1) * Math.PI / 180;
+	const a = Math.sin(dLat / 2) ** 2 +
+		Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+		Math.sin(dLon / 2) ** 2;
+	return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 export interface NearbyServer {
 	url: string;
 	name: string;
@@ -127,7 +137,7 @@ export async function discoverAllServers(): Promise<NearbyServer[]> {
 	return allServers;
 }
 
-export async function fetchFromServers(servers: NearbyServer[]): Promise<DiscoveryResult> {
+export async function fetchFromServers(servers: NearbyServer[], searchCenter?: { lat: number; lon: number; radiusKm: number }): Promise<DiscoveryResult> {
 	const allPosts: AggregatedPost[] = [];
 	const allCommunities: DiscoveredCommunity[] = [];
 
@@ -140,11 +150,14 @@ export async function fetchFromServers(servers: NearbyServer[]): Promise<Discove
 			const posts: AggregatedPost[] = [];
 			const comms: DiscoveredCommunity[] = [];
 
-			const toFetch: { slug: string; name: string; description?: string }[] = communities.slice(0, 5).map((c: any) => ({
-				slug: c.slug,
-				name: c.name,
-				description: c.description,
-			}));
+			const toFetch: { slug: string; name: string; description?: string }[] = [];
+			for (const c of communities.slice(0, 5)) {
+				if (searchCenter && c.location_lat != null && c.location_lon != null) {
+					const dist = haversineKm(searchCenter.lat, searchCenter.lon, c.location_lat, c.location_lon);
+					if (dist > searchCenter.radiusKm) continue;
+				}
+				toFetch.push({ slug: c.slug, name: c.name, description: c.description });
+			}
 
 			if (server.matched_community) {
 				const mc = server.matched_community;

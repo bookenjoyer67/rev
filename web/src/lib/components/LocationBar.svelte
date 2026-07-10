@@ -93,7 +93,7 @@
 
 	button[type="submit"] {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.7rem 1.2rem;
 		border-radius: var(--radius);
 		font-weight: 600;

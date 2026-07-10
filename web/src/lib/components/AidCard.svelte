@@ -99,9 +99,9 @@
 		font-size: 0.7rem;
 	}
 
-	.kind-need { background: #e6394620; color: var(--critical); }
-	.kind-offer { background: #2ec4b620; color: var(--success); }
-	.kind-resource { background: #6366f120; color: #818cf8; }
+	.kind-need { background: var(--kind-need-soft); color: var(--critical); }
+	.kind-offer { background: var(--kind-offer-soft); color: var(--success); }
+	.kind-resource { background: var(--kind-resource-soft); color: var(--kind-resource); }
 
 	.category { color: var(--text-muted); text-transform: capitalize; }
 	.urgency { font-weight: 600; text-transform: uppercase; }
@@ -131,7 +131,7 @@
 
 	.respond-btn {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.4rem 0.8rem;
 		border-radius: var(--radius);
 		font-weight: 600;

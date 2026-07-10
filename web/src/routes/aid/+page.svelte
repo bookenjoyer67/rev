@@ -217,7 +217,7 @@
 
 	.btn-primary {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.5rem 1rem;
 		border-radius: var(--radius);
 		font-weight: 600;
@@ -303,9 +303,9 @@
 		font-size: 0.7rem;
 	}
 
-	.kind-need { background: #e6394620; color: var(--critical); }
-	.kind-offer { background: #2ec4b620; color: var(--success); }
-	.kind-resource { background: #6366f120; color: #818cf8; }
+	.kind-need { background: var(--kind-need-soft); color: var(--critical); }
+	.kind-offer { background: var(--kind-offer-soft); color: var(--success); }
+	.kind-resource { background: var(--kind-resource-soft); color: var(--kind-resource); }
 
 	.category { color: var(--text-muted); text-transform: capitalize; }
 	.urgency { font-weight: 600; text-transform: uppercase; }
@@ -325,7 +325,7 @@
 
 	.respond-btn {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.4rem 0.8rem;
 		border-radius: var(--radius);
 		font-weight: 600;
@@ -335,15 +335,15 @@
 
 	.author-actions { display: flex; gap: 0.4rem; margin-left: auto; }
 	.action-btn { padding: 0.3rem 0.6rem; border-radius: var(--radius); font-size: 0.75rem; font-weight: 600; border: 1px solid; }
-	.action-btn.fulfill { background: #2ec4b615; color: var(--success); border-color: var(--success); }
+	.action-btn.fulfill { background: var(--success-softer); color: var(--success); border-color: var(--success); }
 	.action-btn.edit { background: var(--bg-elevated); color: var(--text-muted); border-color: var(--border); }
-	.action-btn.delete { background: #e6394610; color: var(--critical); border-color: var(--critical); }
+	.action-btn.delete { background: var(--critical-softer); color: var(--critical); border-color: var(--critical); }
 	.fulfilled-badge { font-size: 0.75rem; color: var(--success); font-weight: 600; margin-left: auto; }
 
 	.edit-form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem; }
 	.edit-form input, .edit-form textarea { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem; color: var(--text); font-size: 0.9rem; font-family: inherit; }
 	.edit-actions { display: flex; gap: 0.4rem; }
-	.save-btn { background: var(--accent); color: white; padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; font-weight: 600; }
+	.save-btn { background: var(--accent); color: var(--text-on-accent); padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; font-weight: 600; }
 	.cancel-btn { background: var(--bg-elevated); color: var(--text-muted); padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; border: 1px solid var(--border); }
 
 	.status {

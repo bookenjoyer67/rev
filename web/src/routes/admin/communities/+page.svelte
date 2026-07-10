@@ -113,9 +113,9 @@
 		border-radius: 4px;
 	}
 
-	.vis-public { background: #2ec4b620; color: var(--success); }
-	.vis-federated { background: #6366f120; color: #818cf8; }
-	.vis-private { background: #f4a26120; color: var(--warning); }
+	.vis-public { background: var(--success-soft); color: var(--success); }
+	.vis-federated { background: var(--kind-resource-soft); color: var(--kind-resource); }
+	.vis-private { background: var(--warning-soft); color: var(--warning); }
 
 	.delete-btn {
 		background: none;
@@ -126,7 +126,7 @@
 		border-radius: var(--radius);
 	}
 
-	.delete-btn:hover { background: #e6394620; }
+	.delete-btn:hover { background: var(--critical-soft); }
 
 	.status { text-align: center; color: var(--text-muted); padding: 3rem 0; }
 

@@ -259,7 +259,7 @@ impl Default for Config {
 pub fn load_config() -> Config {
     let args: Vec<String> = std::env::args().collect();
     let path = args.get(1).map(|s| s.as_str()).unwrap_or("config.toml");
-    let mut cfg = match std::fs::read_to_string(path) {
+    let cfg = match std::fs::read_to_string(path) {
         Ok(c) => match toml::from_str(&c) {
             Ok(cfg) => { info!("Loaded config from {}", path); cfg }
             Err(e) => { warn!("Bad config ({}), using defaults", e); Config::default() }

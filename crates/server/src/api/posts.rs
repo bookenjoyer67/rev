@@ -20,7 +20,7 @@ pub fn router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/", axum::routing::post(create_post))
         .route("/{id}", axum::routing::patch(update_post).delete(withdraw_post))
-        .layer(middleware::from_fn(require_auth));
+        .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     public.merge(protected).with_state(state)
 }

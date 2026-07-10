@@ -24,7 +24,7 @@ pub fn router(state: AppState) -> Router {
         .route("/{slug}/invites", get(list_invites))
         .route("/{slug}/invites/{code}", delete(delete_invite))
         .route("/{slug}/join", post(join_community))
-        .layer(middleware::from_fn(require_auth));
+        .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     public.merge(protected).with_state(state)
 }
@@ -106,6 +106,9 @@ async fn create_community(
         map_secret_key.as_deref(),
     ).await?;
     crate::db::communities::add_member(&state.pool, community.id, auth.user_id, "admin").await?;
+    if state.config.discovery.listed || state.config.discovery.directory_enabled {
+        let _ = crate::db::communities::refresh_directory_communities(&state.pool, &state.config.public_url()).await;
+    }
     Ok(Json(community))
 }
 
@@ -121,6 +124,9 @@ async fn update_community(
         return Ok(Json(serde_json::json!({"error": "admin access required"})));
     }
     crate::db::communities::update_community(&state.pool, &slug, input.name, input.description, input.visibility, input.location_name, input.location_lat, input.location_lon).await?;
+    if state.config.discovery.listed || state.config.discovery.directory_enabled {
+        let _ = crate::db::communities::refresh_directory_communities(&state.pool, &state.config.public_url()).await;
+    }
     Ok(Json(serde_json::json!({"status": "updated"})))
 }
 
@@ -229,20 +235,37 @@ struct JoinPayload {
 use axum::response::{IntoResponse, Response};
 use axum::http::StatusCode;
 
-pub struct StatusError(anyhow::Error);
+pub struct StatusError {
+    status: StatusCode,
+    inner: anyhow::Error,
+}
 
 impl<E: Into<anyhow::Error>> From<E> for StatusError {
     fn from(err: E) -> Self {
-        StatusError(err.into())
+        StatusError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            inner: err.into(),
+        }
+    }
+}
+
+impl StatusError {
+    pub fn with_status(status: StatusCode, message: impl std::fmt::Display) -> Self {
+        StatusError {
+            status,
+            inner: anyhow::anyhow!("{}", message),
+        }
     }
 }
 
 impl IntoResponse for StatusError {
     fn into_response(self) -> Response {
-        tracing::error!("request error: {:?}", self.0);
+        if self.status == StatusCode::INTERNAL_SERVER_ERROR {
+            tracing::error!("request error: {:?}", self.inner);
+        }
         (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": self.0.to_string()})),
+            self.status,
+            Json(serde_json::json!({"error": self.inner.to_string()})),
         ).into_response()
     }
 }

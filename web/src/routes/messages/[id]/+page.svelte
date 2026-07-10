@@ -221,9 +221,9 @@
 		font-weight: 600;
 	}
 
-	.status-proposed { background: #f4a26120; color: var(--warning); }
-	.status-accepted { background: #2ec4b620; color: var(--success); }
-	.status-completed { background: #2ec4b640; color: var(--success); }
+	.status-proposed { background: var(--warning-soft); color: var(--warning); }
+	.status-accepted { background: var(--success-soft); color: var(--success); }
+	.status-completed { background: var(--success-strong); color: var(--success); }
 
 	.messages {
 		display: flex;
@@ -246,7 +246,7 @@
 	.bubble.mine {
 		align-self: flex-end;
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 	}
 
 	.bubble.theirs {
@@ -285,7 +285,7 @@
 
 	button[type="submit"] {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.75rem 1.2rem;
 		border-radius: var(--radius);
 		font-weight: 600;
@@ -297,7 +297,7 @@
 		width: 100%;
 		margin-top: 1rem;
 		background: var(--success);
-		color: white;
+		color: var(--text-on-success);
 		padding: 0.75rem;
 		border-radius: var(--radius);
 		font-weight: 600;

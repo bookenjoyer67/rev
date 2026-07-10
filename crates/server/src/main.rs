@@ -11,7 +11,8 @@ mod tasks;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::{http::HeaderValue, middleware, Router};
+use anyhow::Context;
+use axum::{http::HeaderValue, http::header, middleware, Router};
 use config::Config;
 use sqlx::postgres::PgPoolOptions;
 use tower_http::{
@@ -37,34 +38,35 @@ async fn main() -> anyhow::Result<()> {
 
     dotenvy::dotenv().ok();
 
-    let config = Config::load().expect("failed to load configuration");
-
-    match std::env::var("JWT_SECRET") {
-        Ok(jwt) if jwt.len() < 32 => {
-            anyhow::bail!("JWT_SECRET is too short (< 32 chars). Generate with: openssl rand -base64 48");
-        }
-        Err(_) => {
-            anyhow::bail!("JWT_SECRET environment variable must be set");
-        }
-        _ => {}
-    }
+    let config = Config::load()
+        .context("Failed to load configuration. Copy config.example.toml to config.toml and edit it, or set KOMUN_CONFIG to a custom path.")?;
 
     std::env::set_var("JWT_SECRET", &config.auth.jwt_secret);
+
+    if config.auth.jwt_secret.len() < 32 {
+        anyhow::bail!(
+            "JWT_SECRET is too short (< 32 chars). Set it in config.toml [auth] jwt_secret or via the JWT_SECRET environment variable. Generate with: openssl rand -base64 48"
+        );
+    }
 
     let pool = PgPoolOptions::new()
         .max_connections(config.database.max_connections)
         .connect(&config.database.url)
         .await
-        .expect("failed to connect to database");
+        .with_context(|| format!(
+            "Failed to connect to PostgreSQL at {}. Is PostgreSQL running? Check config.toml [database] url or DATABASE_URL env var.",
+            config.database.url
+        ))?;
 
     sqlx::migrate!("../../migrations")
         .run(&pool)
         .await
-        .expect("failed to run migrations");
+        .context("Failed to run database migrations. Is the migrations/ directory present and accessible from the working directory?")?;
 
     let relay_store: Option<Arc<komun_relay::storage::PersistentStore>> = if config.relay.enabled {
         let storage_path = PathBuf::from(&config.relay.storage_path);
-        std::fs::create_dir_all(&storage_path).ok();
+        std::fs::create_dir_all(&storage_path)
+            .with_context(|| format!("Failed to create relay storage directory: {}", storage_path.display()))?;
         let snapshot_path = storage_path.join("community_data.json");
         let store = Arc::new(
             komun_relay::storage::PersistentStore::new(
@@ -88,11 +90,12 @@ async fn main() -> anyhow::Result<()> {
     tasks::spawn_background_tasks(state.clone());
 
     let allowed_origins = &state.config.security.allowed_origins;
+    let cors_headers = [header::AUTHORIZATION, header::CONTENT_TYPE];
     let cors = if allowed_origins == "*" {
         CorsLayer::new()
             .allow_origin(AllowOrigin::any())
             .allow_methods(tower_http::cors::Any)
-            .allow_headers(tower_http::cors::Any)
+            .allow_headers(cors_headers)
     } else {
         let origins: Vec<HeaderValue> = allowed_origins
             .split(',')
@@ -105,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(origins))
             .allow_methods(tower_http::cors::Any)
-            .allow_headers(tower_http::cors::Any)
+            .allow_headers(cors_headers)
     };
 
     let app = Router::new()
@@ -115,18 +118,26 @@ async fn main() -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http());
 
     let bind = config.bind_addr();
-    let listener = tokio::net::TcpListener::bind(&bind).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(&bind)
+        .await
+        .with_context(|| format!(
+            "Failed to bind to {}. Is another process using port {}? Check config.toml [server] port or KOMUN_PORT env var.",
+            bind, config.server.port
+        ))?;
 
-    tracing::info!("komun listening on {}", bind);
+    tracing::info!("komun listening on http://{}", bind);
 
     let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        if let Err(e) = axum::serve(listener, app).await {
+            tracing::error!("Server error: {}", e);
+        }
     });
 
     if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         repl::run_repl(state).await;
     } else {
-        server.await.unwrap();
+        server.await
+            .context("Server task panicked")?;
     }
 
     Ok(())

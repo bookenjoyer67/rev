@@ -4,6 +4,7 @@
 	import Onboarding from '$lib/components/Onboarding.svelte';
 	import { auth, isAuthenticated, getToken, refreshRole, initAuth } from '$lib/stores/auth';
 	import { serverState, getActiveServer } from '$lib/stores/server';
+	import { initTheme } from '$lib/stores/theme';
 
 	let { children } = $props();
 	let unreadCount = $state(0);
@@ -18,6 +19,7 @@
 		window.addEventListener('online', () => { online = true; offlineDismissed = false; });
 		window.addEventListener('offline', () => { online = false; offlineDismissed = false; });
 
+		initTheme();
 		initAuth();
 
 		if (!window.matchMedia('(display-mode: standalone)').matches) {
@@ -208,7 +210,7 @@
 		top: -8px;
 		right: -12px;
 		background: var(--critical);
-		color: white;
+		color: var(--text-on-critical);
 		font-size: 0.65rem;
 		font-weight: 700;
 		min-width: 16px;
@@ -230,13 +232,13 @@
 		font-size: 0.85rem;
 		font-weight: 600;
 		padding: 0.25rem 0.6rem;
-		background: #2ec4b615;
+		background: var(--success-softer);
 		border-radius: var(--radius);
 	}
 
 	.identity:hover {
 		text-decoration: none !important;
-		background: #2ec4b625;
+		background: var(--success-soft);
 	}
 
 	main {
@@ -245,7 +247,7 @@
 
 	.offline-banner {
 		background: var(--warning);
-		color: #000;
+		color: var(--text-on-warning);
 		padding: 0.5rem 1rem;
 		display: flex;
 		justify-content: center;
@@ -273,7 +275,7 @@
 
 	.install-btn {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.4rem 1rem;
 		border-radius: var(--radius);
 		font-weight: 600;

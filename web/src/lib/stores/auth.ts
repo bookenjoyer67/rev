@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 import { getActiveServer } from './server';
-import { generateFullKeypair, createKeyBundle, recoverFromBundle, computeRecoveryId, generateRecoveryCode, hashRecoveryCode, deriveWrapKey, wrapAuthState, unwrapAuthState, bytesToBase64 } from '$lib/crypto';
+import { generateFullKeypair, createKeyBundle, recoverFromBundle, computeRecoveryId, generateRecoveryCode, hashRecoveryCode, deriveWrapKey, wrapAuthState, unwrapAuthState, bytesToBase64, signRegisterChallenge } from '$lib/crypto';
 
 interface PerServerAuth {
 	token: string;
@@ -148,9 +148,13 @@ export async function register(displayName: string, passphrase?: string): Promis
 		auth.set(state);
 	}
 
+	const { challenge, signature } = await signRegisterChallenge(state.keypair!.ed25519SecretKey);
+
 	const body: Record<string, string> = {
 		display_name: displayName,
 		public_key: state.keypair!.ed25519PublicKey,
+		challenge,
+		signature,
 		encryption_public_key: state.keypair!.x25519PublicKey,
 	};
 
@@ -234,12 +238,16 @@ export async function recover(serverUrl: string, passphrase: string, recoveryCod
 		auth.set({ keypair, servers: {} });
 		unlockAuth(passphrase);
 
+		const { challenge, signature } = await signRegisterChallenge(keypair.ed25519SecretKey);
+
 		const regRes = await fetch(`${serverUrl}/api/auth/register`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				display_name: data.display_name,
 				public_key: data.public_key,
+				challenge,
+				signature,
 				encryption_public_key: data.encryption_public_key,
 			}),
 		});
@@ -279,24 +287,22 @@ export async function setPassphrase(passphrase: string): Promise<boolean> {
 			passphrase
 		);
 
-		const res = await fetch(`${server}/api/auth/register`, {
-			method: 'POST',
+		const res = await fetch(`${server}/api/auth/me`, {
+			method: 'PUT',
 			headers: {
 				'Content-Type': 'application/json',
 				'Authorization': `Bearer ${getToken()}`,
 			},
 			body: JSON.stringify({
-				display_name: getActiveAuth()?.displayName,
-				public_key: state.keypair.ed25519PublicKey,
-				encryption_public_key: state.keypair.x25519PublicKey,
 				encrypted_key_bundle: bundle.encryptedBundle,
 				bundle_salt: bundle.salt,
 				recovery_id: bundle.recoveryId,
 			}),
 		});
 
+		if (!res.ok) return false;
 		unlockAuth(passphrase);
-		return res.ok;
+		return true;
 	} catch {
 		return false;
 	}
@@ -304,28 +310,25 @@ export async function setPassphrase(passphrase: string): Promise<boolean> {
 
 export async function updateDisplayName(newName: string): Promise<boolean> {
 	const server = getActiveServer();
-	if (!server) return false;
-	const state = get(auth);
-	if (!state.keypair) return false;
+	const token = getToken();
+	if (!server || !token) return false;
 
 	try {
-		const res = await fetch(`${server}/api/auth/register`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				display_name: newName,
-				public_key: state.keypair.ed25519PublicKey,
-				encryption_public_key: state.keypair.x25519PublicKey,
-			}),
+		const res = await fetch(`${server}/api/auth/me`, {
+			method: 'PUT',
+			headers: {
+				'Content-Type': 'application/json',
+				'Authorization': `Bearer ${token}`,
+			},
+			body: JSON.stringify({ display_name: newName }),
 		});
 
 		if (!res.ok) return false;
-		const data = await res.json();
 		auth.update((s) => ({
 			...s,
 			servers: {
 				...s.servers,
-				[server]: { ...s.servers[server], displayName: data.display_name },
+				[server]: { ...s.servers[server], displayName: newName },
 			},
 		}));
 		return true;

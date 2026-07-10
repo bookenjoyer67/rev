@@ -9,7 +9,22 @@ const config = {
 			pages: 'build',
 			assets: 'build',
 			fallback: 'index.html'
-		})
+		}),
+		csp: {
+			mode: 'hash',
+			directives: {
+				'default-src': ['self'],
+				'script-src': ['self', 'wasm-unsafe-eval'],
+				'style-src': ['self', 'unsafe-inline'],
+				'img-src': ['self', 'data:', 'blob:'],
+				'frame-src': ['self', 'https://localhost:5174', 'https://app.piggpin.space', 'https://www.openstreetmap.org'],
+				'connect-src': ['self', 'http://localhost:*', 'https://localhost:5174', 'https://*.piggpin.space', 'wss://*.piggpin.space'],
+				'font-src': ['self'],
+				'object-src': ['none'],
+				'base-uri': ['self'],
+				'form-action': ['self']
+			}
+		}
 	}
 };
 

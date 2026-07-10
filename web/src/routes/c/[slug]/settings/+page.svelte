@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { isConnected } from '$lib/stores/server';
+	import { isConnected, getActiveServer, resolveSlug } from '$lib/stores/server';
 	import { isAuthenticated } from '$lib/stores/auth';
 	import { api } from '$lib/api/client';
 
@@ -25,21 +25,20 @@
 	let saved = $state(false);
 	let error = $state('');
 	let slug = $state('');
+	let localSlug = $state('');
 
 	async function geocodeCoords(query: string): Promise<{ lat: number; lon: number; display_name: string } | null> {
+		const serverUrl = getActiveServer();
+		if (!serverUrl) return null;
 		try {
-			const res = await fetch(
-				`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`,
-				{ headers: { 'User-Agent': 'Komun/0.1 (mutual-aid-app)' } }
-			);
+			const res = await fetch(`${serverUrl}/api/geocode?q=${encodeURIComponent(query)}`);
 			if (!res.ok) return null;
-			const results = await res.json();
-			if (results.length === 0) return null;
-			const r = results[0];
+			const result = await res.json();
+			if (!result.lat || !result.lon) return null;
 			return {
-				lat: parseFloat(r.lat),
-				lon: parseFloat(r.lon),
-				display_name: r.display_name.split(',').slice(0, 2).join(',').trim(),
+				lat: parseFloat(result.lat),
+				lon: parseFloat(result.lon),
+				display_name: result.display_name.split(',').slice(0, 2).join(',').trim(),
 			};
 		} catch {
 			return null;
@@ -73,10 +72,19 @@
 	}
 
 	onMount(async () => {
-		if (!isConnected() || !isAuthenticated()) { goto('/'); return; }
-		slug = $page.params.slug as string;
+		const rawSlug = $page.params.slug as string;
+		slug = rawSlug;
+		let resolved;
 		try {
-			const community = await api.communities.get(slug);
+			resolved = await resolveSlug(rawSlug);
+			localSlug = resolved.localSlug;
+		} catch {
+			goto('/connect');
+			return;
+		}
+		if (!isAuthenticated()) { goto('/'); return; }
+		try {
+			const community = await api.communities.get(localSlug);
 			if (community.member_role !== 'admin') { goto(`/c/${slug}`); return; }
 			name = community.name;
 			description = community.description || '';
@@ -89,7 +97,7 @@
 				resolvedLon = community.location_lon;
 				resolvedName = community.location_name || null;
 			}
-			invites = await api.communities.listInvites(slug);
+			invites = await api.communities.listInvites(localSlug);
 		} catch { goto(`/c/${slug}`); }
 		loading = false;
 	});
@@ -98,7 +106,7 @@
 		saving = true;
 		error = '';
 		try {
-			await api.communities.update(slug, {
+			await api.communities.update(localSlug, {
 				name: name.trim(),
 				description: description.trim() || undefined,
 				visibility,
@@ -116,13 +124,13 @@
 
 	async function createInvite() {
 		try {
-			const invite = await api.communities.createInvite(slug);
+			const invite = await api.communities.createInvite(localSlug);
 			invites = [invite, ...invites];
 		} catch (e: any) { error = e.message; }
 	}
 
 	async function removeInvite(code: string) {
-		await api.communities.deleteInvite(slug, code);
+		await api.communities.deleteInvite(localSlug, code);
 		invites = invites.filter(i => i.code !== code);
 	}
 
@@ -219,13 +227,13 @@
 	input, textarea, select { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem; color: var(--text); font-size: 1rem; font-family: inherit; }
 	input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
 
-	.save-btn { background: var(--accent); color: white; padding: 0.75rem; border-radius: var(--radius); font-weight: 600; }
+	.save-btn { background: var(--accent); color: var(--text-on-accent); padding: 0.75rem; border-radius: var(--radius); font-weight: 600; }
 	.save-btn:disabled { opacity: 0.6; }
 
 	.invites { border-top: 1px solid var(--border); padding-top: 1.5rem; }
 	.invite-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
 	h2 { font-size: 1.2rem; }
-	.create-btn { background: var(--success); color: white; padding: 0.4rem 0.8rem; border-radius: var(--radius); font-weight: 600; font-size: 0.85rem; }
+	.create-btn { background: var(--success); color: var(--text-on-success); padding: 0.4rem 0.8rem; border-radius: var(--radius); font-weight: 600; font-size: 0.85rem; }
 	.hint { color: var(--text-muted); font-size: 0.8rem; margin-bottom: 1rem; }
 	.empty { color: var(--text-muted); font-size: 0.85rem; }
 
@@ -251,7 +259,7 @@
 	}
 
 	.geo-feedback.not-found {
-		color: #b45309;
+		color: var(--warning);
 	}
 
 	.map-preview {

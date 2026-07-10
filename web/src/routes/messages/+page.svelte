@@ -119,7 +119,7 @@
 
 	.kind-need { background: var(--critical); }
 	.kind-offer { background: var(--success); }
-	.kind-resource { background: #818cf8; }
+	.kind-resource { background: var(--kind-resource); }
 
 	.status-badge {
 		margin-left: auto;
@@ -130,9 +130,9 @@
 		font-weight: 600;
 	}
 
-	.status-proposed { background: #f4a26120; color: var(--warning); }
-	.status-accepted { background: #2ec4b620; color: var(--success); }
-	.status-completed { background: #2ec4b640; color: var(--success); }
+	.status-proposed { background: var(--warning-soft); color: var(--warning); }
+	.status-accepted { background: var(--success-soft); color: var(--success); }
+	.status-completed { background: var(--success-strong); color: var(--success); }
 
 	.convo-preview {
 		font-size: 0.85rem;

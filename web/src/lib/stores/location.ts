@@ -1,4 +1,6 @@
 import { writable, get } from 'svelte/store';
+import { getActiveServer } from '$lib/stores/server';
+import { getDirectories } from '$lib/stores/directories';
 
 interface LocationState {
 	name: string;
@@ -38,18 +40,17 @@ export function getLocation(): LocationState {
 }
 
 export async function geocode(query: string): Promise<boolean> {
+	const serverUrl = getActiveServer() || getDirectories()[0];
+	if (!serverUrl) return false;
+
 	try {
 		const encoded = encodeURIComponent(query);
-		const res = await fetch(
-			`https://nominatim.openstreetmap.org/search?q=${encoded}&format=json&limit=1`,
-			{ headers: { 'User-Agent': 'Komun/0.1 (mutual-aid-app)' } }
-		);
+		const res = await fetch(`${serverUrl}/api/geocode?q=${encoded}`);
 		if (!res.ok) return false;
 
-		const results = await res.json();
-		if (results.length === 0) return false;
+		const result = await res.json();
+		if (!result.lat || !result.lon) return false;
 
-		const result = results[0];
 		location.set({
 			name: result.display_name.split(',').slice(0, 2).join(',').trim(),
 			lat: parseFloat(result.lat),

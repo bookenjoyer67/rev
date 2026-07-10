@@ -48,6 +48,17 @@ pub async fn create_match(
     responder_id: Uuid,
     initial_message: &str,
 ) -> Result<(Uuid, Uuid)> {
+    let post_author = sqlx::query_scalar::<_, Uuid>("SELECT author_id FROM posts WHERE id = $1")
+        .bind(post_id)
+        .fetch_optional(pool)
+        .await?;
+
+    if let Some(author_id) = post_author {
+        if author_id == responder_id {
+            return Err(anyhow!("cannot respond to your own post"));
+        }
+    }
+
     let mut tx = pool.begin().await?;
     let match_id = Uuid::now_v7();
     let message_id = Uuid::now_v7();
@@ -77,30 +88,23 @@ pub async fn create_match(
 
     tx.commit().await?;
 
-    let post_author = sqlx::query_scalar::<_, Uuid>("SELECT author_id FROM posts WHERE id = $1")
-        .bind(post_id)
-        .fetch_optional(pool)
-        .await?;
-
     if let Some(author_id) = post_author {
-        if author_id != responder_id {
-            let responder_name = sqlx::query_scalar::<_, String>("SELECT display_name FROM users WHERE id = $1")
-                .bind(responder_id)
-                .fetch_optional(pool)
-                .await?
-                .unwrap_or_default();
-            let post_title = sqlx::query_scalar::<_, String>("SELECT title FROM posts WHERE id = $1")
-                .bind(post_id)
-                .fetch_optional(pool)
-                .await?
-                .unwrap_or_default();
-            super::notifications::create(
-                pool, author_id, "response",
-                &format!("{} responded to: {}", responder_name, post_title),
-                None,
-                Some(&format!("/messages/{}", match_id)),
-            ).await.ok();
-        }
+        let responder_name = sqlx::query_scalar::<_, String>("SELECT display_name FROM users WHERE id = $1")
+            .bind(responder_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or_default();
+        let post_title = sqlx::query_scalar::<_, String>("SELECT title FROM posts WHERE id = $1")
+            .bind(post_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or_default();
+        super::notifications::create(
+            pool, author_id, "response",
+            &format!("{} responded to: {}", responder_name, post_title),
+            None,
+            Some(&format!("/messages/{}", match_id)),
+        ).await.ok();
     }
 
     Ok((match_id, message_id))
@@ -178,6 +182,18 @@ pub async fn get_conversation(pool: &PgPool, match_id: Uuid, user_id: Uuid) -> R
 }
 
 pub async fn send_message(pool: &PgPool, match_id: Uuid, sender_id: Uuid, body: &str) -> Result<MessageRow> {
+    let participant = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM matches m JOIN posts p ON p.id = m.post_id WHERE m.id = $1 AND ($2 = m.responder_id OR $2 = p.author_id))"
+    )
+    .bind(match_id)
+    .bind(sender_id)
+    .fetch_one(pool)
+    .await?;
+
+    if !participant {
+        return Err(anyhow!("not a participant in this conversation"));
+    }
+
     let id = Uuid::now_v7();
     let now = Utc::now();
 

@@ -1,5 +1,9 @@
+use std::sync::LazyLock;
+use std::time::Instant as StdInstant;
+
 use axum::{
     extract::{Query, State},
+    http::StatusCode,
     middleware,
     routing::{delete, get, post},
     Json, Router,
@@ -7,21 +11,40 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::AppState;
 use crate::auth::require_auth;
 use super::communities::StatusError;
 
+static REGISTRATIONS: LazyLock<TokioMutex<Vec<StdInstant>>> =
+    LazyLock::new(|| TokioMutex::new(Vec::new()));
+
 pub fn router(state: AppState) -> Router {
-    let public = Router::new()
+    let mut public = Router::new()
         .route("/directory", get(list_servers));
 
-    let protected = Router::new()
-        .route("/directory/register", post(register_server))
-        .route("/directory/{url}", delete(remove_server))
-        .layer(middleware::from_fn(require_auth));
+    if state.config.discovery.registration_mode == "open" {
+        public = public.route("/directory/register", post(register_server));
+    }
 
-    public.merge(protected).with_state(state)
+    let protected = Router::new()
+        .route("/directory/{url}", delete(remove_server))
+        .layer(middleware::from_fn_with_state(state.clone(), require_auth));
+
+    let protected_register = if state.config.discovery.registration_mode != "open" {
+        Some(Router::new()
+            .route("/directory/register", post(register_server))
+            .layer(middleware::from_fn_with_state(state.clone(), require_auth)))
+    } else {
+        None
+    };
+
+    let mut router = public.merge(protected);
+    if let Some(r) = protected_register {
+        router = router.merge(r);
+    }
+    router.with_state(state)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +111,19 @@ async fn register_server(
     State(state): State<AppState>,
     Json(input): Json<RegisterRequest>,
 ) -> Result<Json<serde_json::Value>, StatusError> {
+    {
+        let mut registrations = REGISTRATIONS.lock().await;
+        let window_start = StdInstant::now() - std::time::Duration::from_secs(3600);
+        registrations.retain(|t| *t > window_start);
+        if registrations.len() >= 20 {
+            return Err(StatusError::with_status(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate limit exceeded: max 20 server registrations per hour",
+            ));
+        }
+        registrations.push(StdInstant::now());
+    }
+
     let url = input.url.trim_end_matches('/').to_string();
 
     let community_locations = input.communities.as_ref()
@@ -198,22 +234,41 @@ async fn list_servers(
 
         let mut seen = std::collections::HashSet::new();
         let mut entries: Vec<DirectoryEntryWithDistance> = Vec::new();
+        let mut urls_with_community = std::collections::HashSet::new();
 
-        for r in server_rows.into_iter().chain(community_rows) {
-            let mc = if r.matched_slug.is_some() {
-                Some(MatchedCommunity {
-                    slug: r.matched_slug.clone().unwrap_or_default(),
-                    name: r.matched_community_name.clone().unwrap_or_default(),
-                    location_name: r.matched_community_location_name.clone(),
-                })
-            } else {
-                None
+        for r in community_rows {
+            let mc = MatchedCommunity {
+                slug: r.matched_slug.clone().unwrap_or_default(),
+                name: r.matched_community_name.clone().unwrap_or_default(),
+                location_name: r.matched_community_location_name.clone(),
             };
-            let key = if let Some(ref c) = mc {
-                format!("{}:{}", r.url, c.slug)
-            } else {
-                r.url.clone()
-            };
+            let key = format!("{}:{}", r.url, mc.slug);
+            if seen.insert(key.clone()) {
+                urls_with_community.insert(r.url.clone());
+                entries.push(DirectoryEntryWithDistance {
+                    entry: DirectoryEntry {
+                        url: r.url,
+                        name: r.name,
+                        description: r.description,
+                        location_name: r.location_name,
+                        location_lat: r.location_lat,
+                        location_lon: r.location_lon,
+                        communities_count: r.communities_count,
+                        version: r.version,
+                        last_seen: r.last_seen,
+                        registered_at: r.registered_at,
+                    },
+                    distance_km: r.distance_km,
+                    matched_community: Some(mc),
+                });
+            }
+        }
+
+        for r in server_rows {
+            if urls_with_community.contains(&r.url) {
+                continue;
+            }
+            let key = r.url.clone();
             if seen.insert(key) {
                 entries.push(DirectoryEntryWithDistance {
                     entry: DirectoryEntry {
@@ -229,7 +284,7 @@ async fn list_servers(
                         registered_at: r.registered_at,
                     },
                     distance_km: r.distance_km,
-                    matched_community: mc,
+                    matched_community: None,
                 });
             }
         }

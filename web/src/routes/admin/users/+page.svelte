@@ -154,7 +154,7 @@
 		border-radius: var(--radius);
 	}
 
-	.delete-btn:hover { background: #e6394620; }
+	.delete-btn:hover { background: var(--critical-soft); }
 
 	.status { text-align: center; color: var(--text-muted); padding: 3rem 0; }
 

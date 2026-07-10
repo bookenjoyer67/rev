@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { requireAuth } from '$lib/stores/auth';
+	import { getActiveServer } from '$lib/stores/server';
 	import { api } from '$lib/api/client';
 
 	let name = $state('');
@@ -16,19 +17,17 @@
 	let debounceTimer: ReturnType<typeof setTimeout> | null = $state(null);
 
 	async function geocodeCoords(query: string): Promise<{ lat: number; lon: number; display_name: string } | null> {
+		const serverUrl = getActiveServer();
+		if (!serverUrl) return null;
 		try {
-			const res = await fetch(
-				`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`,
-				{ headers: { 'User-Agent': 'Komun/0.1 (mutual-aid-app)' } }
-			);
+			const res = await fetch(`${serverUrl}/api/geocode?q=${encodeURIComponent(query)}`);
 			if (!res.ok) return null;
-			const results = await res.json();
-			if (results.length === 0) return null;
-			const r = results[0];
+			const result = await res.json();
+			if (!result.lat || !result.lon) return null;
 			return {
-				lat: parseFloat(r.lat),
-				lon: parseFloat(r.lon),
-				display_name: r.display_name.split(',').slice(0, 2).join(',').trim(),
+				lat: parseFloat(result.lat),
+				lon: parseFloat(result.lon),
+				display_name: result.display_name.split(',').slice(0, 2).join(',').trim(),
 			};
 		} catch {
 			return null;
@@ -193,7 +192,7 @@
 
 	button {
 		background: var(--accent);
-		color: white;
+		color: var(--text-on-accent);
 		padding: 0.75rem;
 		border-radius: var(--radius);
 		font-weight: 600;
@@ -223,7 +222,7 @@
 	}
 
 	.geo-feedback.not-found {
-		color: #b45309;
+		color: var(--warning);
 	}
 
 	.map-preview {
