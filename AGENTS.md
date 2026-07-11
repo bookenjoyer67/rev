@@ -23,8 +23,8 @@ cargo build --release --bin komun-server
 
 If you change crypto in `crates/wasm/`, you must rebuild the WASM pkg and the frontend.
 
-### Docker builds require SQLX_OFFLINE
-The Dockerfile sets `ENV SQLX_OFFLINE=true` so sqlx compiles without a live database. If you add queries, run `cargo sqlx prepare` to update the offline query cache.
+### Docker builds use runtime queries
+The Dockerfile sets `ENV SQLX_OFFLINE=true` as a safety measure, but since all queries use `sqlx::query()` / `sqlx::query_as()` (runtime), not `sqlx::query!()` (compile-time), no `sqlx prepare` step is needed. Docker builds work as-is.
 
 ### Svelte 5 runes only
 No `$:`, no `export let`, no `on:click`. Use `$state()`, `$derived()`, `$effect()`, `$props()`, `onclick={handler}`.
