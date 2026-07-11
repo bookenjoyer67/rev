@@ -1,3 +1,4 @@
+mod alliances;
 mod admin;
 mod communities;
 mod conversations;
@@ -21,6 +22,7 @@ pub fn router(state: AppState) -> Router {
         .merge(conversations::router(state.clone()))
         .merge(notifications::router(state.clone()))
         .merge(admin::router(state.clone()))
+        .merge(alliances::router(state.clone()))
         .nest("/auth", auth::router(state.clone()))
         .nest("/communities", communities::router(state.clone()))
         .nest("/communities/{slug}/posts", posts::router(state.clone()));
