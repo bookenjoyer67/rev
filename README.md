@@ -94,6 +94,47 @@ cp config.example.toml config.toml
 docker compose up --build
 ```
 
+### TLS / Production
+
+Komun does **not** handle TLS itself — it expects a reverse proxy in front.
+
+**nginx example:**
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name komun.your-domain.org;
+
+    ssl_certificate     /etc/letsencrypt/live/komun/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/komun/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location /relay {
+        proxy_pass http://127.0.0.1:9001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+**Cloudflare:** Point DNS at Cloudflare, enable "Full (strict)" SSL, no further config needed.
+
+**Environment variables for production:**
+
+```bash
+export JWT_SECRET="your-strong-random-secret-at-least-32-chars"
+export DATABASE_URL="postgres://user:pass@host:5432/komun"
+```
+
+`JWT_SECRET` env var is **required** for production — the server warns on startup if it's missing and errors if the secret is too short.
+
 ---
 
 ## 🔐 Security Model

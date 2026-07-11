@@ -40,6 +40,8 @@ pub enum PostStatus {
     Fulfilled,
     Expired,
     Withdrawn,
+    Hidden,
+    Flagged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

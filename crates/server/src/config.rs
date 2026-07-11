@@ -234,6 +234,21 @@ impl Config {
         };
 
         config.apply_env_overrides();
+
+        if std::env::var("JWT_SECRET").is_err() {
+            tracing::warn!(
+                "JWT_SECRET not set in environment. Using value from config.toml. \
+                 Set JWT_SECRET env var for production deployments."
+            );
+        }
+
+        if config.auth.jwt_secret.len() < 32 {
+            tracing::error!(
+                "jwt_secret is too short ({} chars). Must be at least 32 characters.",
+                config.auth.jwt_secret.len()
+            );
+            return Err(anyhow::anyhow!("jwt_secret must be at least 32 characters"));
+        }
         Ok(config)
     }
 
