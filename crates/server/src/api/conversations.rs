@@ -33,6 +33,22 @@ async fn respond_to_post(
     Path(post_id): Path<Uuid>,
     Json(input): Json<RespondRequest>,
 ) -> Result<Json<serde_json::Value>, StatusError> {
+    let recent: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM matches WHERE responder_id = $1 AND created_at > now() - interval '1 hour'"
+    )
+    .bind(auth.user_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+
+    if recent >= state.config.security.max_matches_per_hour as i64 {
+        return Err(anyhow::anyhow!(
+            "rate limit: max {} responses per hour",
+            state.config.security.max_matches_per_hour
+        )
+        .into());
+    }
+
     let (match_id, _message_id) = crate::db::conversations::create_match(
         &state.pool,
         post_id,

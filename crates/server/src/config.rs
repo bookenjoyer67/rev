@@ -95,6 +95,7 @@ pub struct FederationConfig {
 pub struct SecurityConfig {
     pub max_posts_per_hour: u32,
     pub max_messages_per_hour: u32,
+    pub max_matches_per_hour: u32,
     pub allowed_origins: String,
 }
 
@@ -214,6 +215,7 @@ impl Default for SecurityConfig {
         Self {
             max_posts_per_hour: 60,
             max_messages_per_hour: 200,
+            max_matches_per_hour: 30,
             allowed_origins: "*".into(),
         }
     }

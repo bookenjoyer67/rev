@@ -55,6 +55,7 @@ enabled = false
 # Rate limiting (per user)
 max_posts_per_hour = 60
 max_messages_per_hour = 200
+max_matches_per_hour = 30
 # CORS allowed origins ("*" = any Komun frontend can connect)
 allowed_origins = "*"
 
