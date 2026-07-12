@@ -129,6 +129,34 @@ export const api = {
 
 	alliances: {
 		list: () => request<any[]>('/alliances'),
+		propose: (remote_domain: string, remote_name?: string) =>
+			request<any>('/alliances', {
+				method: 'POST',
+				body: JSON.stringify({ remote_domain, remote_name }),
+				auth: true,
+			}),
+		accept: (id: string) =>
+			request<any>(`/alliances/${id}/accept`, { method: 'POST', auth: true }),
+		reject: (id: string) =>
+			request<any>(`/alliances/${id}/reject`, { method: 'POST', auth: true }),
+		delete: (id: string) =>
+			request<any>(`/alliances/${id}`, { method: 'DELETE', auth: true }),
+	},
+
+	endorsements: {
+		list: (userId: string) =>
+			request<{ count: number; endorsements: any[] }>(`/users/${userId}/endorsements`),
+		endorse: (userId: string, note?: string) =>
+			request<any>(`/users/${userId}/endorse`, {
+				method: 'POST',
+				body: JSON.stringify({ note }),
+				auth: true,
+			}),
+		unendorse: (userId: string) =>
+			request<any>(`/users/${userId}/endorse`, {
+				method: 'DELETE',
+				auth: true,
+			}),
 	},
 
 	admin: {

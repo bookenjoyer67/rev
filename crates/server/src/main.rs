@@ -2,6 +2,7 @@ mod api;
 pub mod auth;
 pub mod config;
 mod db;
+mod federation;
 mod relay_bridge;
 mod relay_ops;
 mod repl;
@@ -19,6 +20,7 @@ use config::Config;
 use sqlx::postgres::PgPoolOptions;
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
+    services::ServeDir,
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -113,8 +115,16 @@ async fn main() -> anyhow::Result<()> {
             .allow_headers(cors_headers)
     };
 
+    let avatar_dir = std::path::absolute(&state.config.media.avatar_dir)
+        .unwrap_or_else(|_| std::path::PathBuf::from(&state.config.media.avatar_dir));
+    std::fs::create_dir_all(&avatar_dir).ok();
+    let post_img_dir = std::path::absolute(&state.config.media.post_images_dir)
+        .unwrap_or_else(|_| std::path::PathBuf::from(&state.config.media.post_images_dir));
+    std::fs::create_dir_all(&post_img_dir).ok();
     let app = Router::new()
         .nest("/api", api::router(state.clone()))
+        .nest_service("/avatars", ServeDir::new(&avatar_dir))
+        .nest_service("/post-images", ServeDir::new(&post_img_dir))
         .layer(cors)
         .layer(middleware::from_fn(security_headers::security_headers))
         .layer(TraceLayer::new_for_http());

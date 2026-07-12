@@ -184,6 +184,7 @@ async fn delete_invite(
 
 #[derive(serde::Serialize, sqlx::FromRow)]
 struct MemberInfo {
+    user_id: uuid::Uuid,
     display_name: String,
     role: String,
     joined_at: chrono::DateTime<chrono::Utc>,
@@ -195,7 +196,7 @@ async fn list_members(
 ) -> Result<Json<Vec<MemberInfo>>, StatusError> {
     let community = crate::db::communities::get_by_slug(&state.pool, &slug).await?;
     let members = sqlx::query_as::<_, MemberInfo>(
-        "SELECT display_name, role, joined_at FROM members WHERE community_id = $1 ORDER BY joined_at"
+        "SELECT user_id, display_name, role, joined_at FROM members WHERE community_id = $1 ORDER BY joined_at"
     )
     .bind(community.id)
     .fetch_all(&state.pool)

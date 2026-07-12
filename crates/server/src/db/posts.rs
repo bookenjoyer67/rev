@@ -17,7 +17,7 @@ pub async fn list(
     let rows = sqlx::query_as::<_, PostRow>(
         r#"SELECT id, community_id, author_id, kind, category, title, body,
            location_name, location_lat, location_lon, urgency, quantity, status,
-           visibility, expires_at, tags, contact_method, verified_by, verified_at,
+           visibility, expires_at, tags, contact_method, images, verified_by, verified_at,
            federated_id, origin_node, created_at, updated_at
            FROM posts
            WHERE community_id = $1
@@ -48,7 +48,7 @@ pub async fn get(pool: &PgPool, id: Uuid) -> Result<Post> {
     let row = sqlx::query_as::<_, PostRow>(
         r#"SELECT id, community_id, author_id, kind, category, title, body,
            location_name, location_lat, location_lon, urgency, quantity, status,
-           visibility, expires_at, tags, contact_method, verified_by, verified_at,
+           visibility, expires_at, tags, contact_method, images, verified_by, verified_at,
            federated_id, origin_node, created_at, updated_at
            FROM posts WHERE id = $1"#,
     )
@@ -165,6 +165,7 @@ struct PostRow {
     expires_at: Option<chrono::DateTime<Utc>>,
     tags: Option<Vec<String>>,
     contact_method: Option<String>,
+    images: Option<Vec<String>>,
     verified_by: Option<Uuid>,
     verified_at: Option<chrono::DateTime<Utc>>,
     federated_id: Option<String>,
@@ -224,6 +225,7 @@ impl From<PostRow> for Post {
             expires_at: r.expires_at,
             tags: r.tags.unwrap_or_default(),
             contact_method: r.contact_method,
+            images: r.images.unwrap_or_default(),
             verified_by: r.verified_by,
             verified_at: r.verified_at,
             federated_id: r.federated_id,

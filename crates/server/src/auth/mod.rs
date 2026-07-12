@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Request, State},
+    extract::{Multipart, Request, State},
     http::{header, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -43,6 +43,8 @@ pub struct RegisterRequest {
 #[derive(Deserialize)]
 pub struct UpdateProfileRequest {
     display_name: Option<String>,
+    bio: Option<String>,
+    profile_json: Option<serde_json::Value>,
     encryption_public_key: Option<String>,
     encrypted_key_bundle: Option<String>,
     bundle_salt: Option<String>,
@@ -55,6 +57,8 @@ pub struct AuthResponse {
     token: String,
     user_id: Uuid,
     display_name: String,
+    bio: Option<String>,
+    avatar_url: Option<String>,
     role: String,
 }
 
@@ -100,6 +104,7 @@ pub fn router(state: AppState) -> Router {
         .route("/recover", post(recover))
         .route("/me", get(me))
         .route("/me", axum::routing::put(update_profile))
+        .route("/me/avatar", post(upload_avatar))
         .route("/challenge", post(create_challenge))
         .route("/verify-challenge", post(verify_challenge));
 
@@ -140,7 +145,7 @@ fn decode_b64(s: &str) -> Result<Vec<u8>, (StatusCode, Json<serde_json::Value>)>
     })
 }
 
-fn encode_b64(bytes: &[u8]) -> String {
+pub fn encode_b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
@@ -271,6 +276,8 @@ async fn register(
         token,
         user_id,
         display_name: input.display_name,
+        bio: None,
+        avatar_url: None,
         role,
     }))
 }
@@ -389,7 +396,9 @@ async fn me(
         Json(serde_json::json!({"error": "not authenticated"})),
     ))?;
 
-    let row = sqlx::query_as::<_, UserRow>("SELECT id, display_name, role FROM users WHERE id = $1")
+    let row = sqlx::query_as::<_, MeRow>(
+        "SELECT id, display_name, bio, avatar_path, role FROM users WHERE id = $1"
+    )
         .bind(user_id)
         .fetch_optional(&state.pool)
         .await
@@ -400,6 +409,8 @@ async fn me(
         token: String::new(),
         user_id: row.id,
         display_name: row.display_name,
+        bio: row.bio,
+        avatar_url: row.avatar_path.map(|p| format!("/avatars/{}", p)),
         role: row.role,
     }))
 }
@@ -439,15 +450,19 @@ async fn update_profile(
 
     sqlx::query(
         "UPDATE users SET display_name = COALESCE($1, display_name),
-         encryption_public_key = COALESCE($2, encryption_public_key),
-         encrypted_key_bundle = COALESCE($3, encrypted_key_bundle),
-         bundle_salt = COALESCE($4, bundle_salt),
-         recovery_id = COALESCE($5, recovery_id),
-         recovery_code_hash = COALESCE($6, recovery_code_hash),
+         bio = COALESCE($2, bio),
+         profile_json = COALESCE($3, profile_json),
+         encryption_public_key = COALESCE($4, encryption_public_key),
+         encrypted_key_bundle = COALESCE($5, encrypted_key_bundle),
+         bundle_salt = COALESCE($6, bundle_salt),
+         recovery_id = COALESCE($7, recovery_id),
+         recovery_code_hash = COALESCE($8, recovery_code_hash),
          last_seen = now()
-         WHERE id = $7"
+         WHERE id = $9"
     )
     .bind(&display_name)
+    .bind(&input.bio)
+    .bind(&input.profile_json)
     .bind(&encryption_pk)
     .bind(&bundle)
     .bind(&salt)
@@ -459,6 +474,111 @@ async fn update_profile(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
 
     Ok(Json(serde_json::json!({"ok": true})))
+}
+
+async fn upload_avatar(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    let user_id = token
+        .and_then(|t| verify_token(&state.config.auth.jwt_secret, t))
+        .ok_or((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "not authenticated"})),
+        ))?;
+
+    let recent: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM avatar_uploads WHERE user_id = $1 AND uploaded_at > now() - interval '1 hour'",
+    )
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+    if recent >= 5 {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({"error": "rate limited: 5 uploads per hour"})),
+        ));
+    }
+
+    let field = multipart
+        .next_field()
+        .await
+        .map_err(|_| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid multipart"}))))?
+        .ok_or((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "no file"}))))?;
+
+    let content_type = field.content_type().unwrap_or("").to_string();
+    if !matches!(
+        content_type.as_str(),
+        "image/png" | "image/jpeg" | "image/webp"
+    ) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "only PNG, JPEG, WebP"})),
+        ));
+    }
+
+    let data = field
+        .bytes()
+        .await
+        .map_err(|_| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "read error"}))))?;
+    if data.len() > state.config.media.max_avatar_bytes as usize {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "file too large (max 1MB)"})),
+        ));
+    }
+
+    let img = image::load_from_memory(&data)
+        .map_err(|_| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid image"}))))?;
+    let img = if img.width() > 512 || img.height() > 512 {
+        img.resize(512, 512, image::imageops::FilterType::Lanczos3)
+    } else {
+        img
+    };
+
+    let avatar_id = Uuid::now_v7();
+    let filename = format!("{}.webp", avatar_id);
+    let dir = std::path::Path::new(&state.config.media.avatar_dir);
+    std::fs::create_dir_all(dir).ok();
+    let path = dir.join(&filename);
+    img.save(&path)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "save failed"}))))?;
+
+    sqlx::query("INSERT INTO avatar_uploads (user_id, uploaded_at) VALUES ($1, now())")
+        .bind(user_id)
+        .execute(&state.pool)
+        .await
+        .ok();
+
+    sqlx::query("UPDATE users SET avatar_path = $1 WHERE id = $2")
+        .bind(&filename)
+        .bind(user_id)
+        .execute(&state.pool)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "db error"})),
+            )
+        })?;
+
+    let url = format!("/avatars/{}", filename);
+    Ok(Json(serde_json::json!({"avatar_url": url})))
+}
+
+#[derive(sqlx::FromRow)]
+struct MeRow {
+    id: Uuid,
+    display_name: String,
+    bio: Option<String>,
+    avatar_path: Option<String>,
+    role: String,
 }
 
 #[derive(sqlx::FromRow)]

@@ -78,7 +78,7 @@ export function parseSlug(rawSlug: string): { localSlug: string; domain: string 
 export async function resolveSlug(rawSlug: string): Promise<{ localSlug: string; serverUrl: string }> {
 	const { localSlug, domain } = parseSlug(rawSlug);
 
-	if (!domain) {
+	if (!domain || domain === 'localhost') {
 		const active = getActiveServer();
 		if (!active) throw new Error('Not connected to a server');
 		return { localSlug, serverUrl: active };

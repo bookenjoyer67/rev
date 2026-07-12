@@ -22,7 +22,7 @@
 		created_at: string;
 	}
 
-	interface Member { display_name: string; role: string; joined_at: string; }
+	interface Member { user_id: string; display_name: string; role: string; joined_at: string; }
 
 	let community: Community | null = $state(null);
 	let posts: Post[] = $state([]);
@@ -197,11 +197,15 @@
 		</div>
 
 		{#if posts.length === 0}
-			<p class="status">No posts yet. Be the first to share.</p>
+			<div class="empty-state">
+					<p class="empty-icon">📭</p>
+					<p class="empty-title">No posts yet</p>
+					<p class="empty-body">Be the first to share what your community needs — or what you can offer.</p>
+				</div>
 		{:else}
 			<ul class="post-list">
 				{#each posts as post}
-					<li class="post-card">
+					<li class="post-card kind-{post.kind}" class:post-urgent={post.urgency === 'urgent' || post.urgency === 'critical'}>
 						<div class="post-meta">
 							<span class="kind kind-{post.kind}">{kindLabels[post.kind]}</span>
 							<span class="category">{post.category}</span>
@@ -257,7 +261,13 @@
 				<ul class="member-list">
 					{#each members as member}
 						<li>
-							<span class="member-name">{member.display_name}</span>
+							<span class="member-name">
+								{#if member.user_id}
+									<a href="/users/{member.user_id}">{member.display_name}</a>
+								{:else}
+									{member.display_name}
+								{/if}
+							</span>
 							{#if member.role !== 'member'}
 								<span class="member-role">{member.role}</span>
 							{/if}
@@ -315,12 +325,57 @@
 
 	.btn-settings:hover { text-decoration: none; border-color: var(--accent); }
 
-	.join-banner {
+	.post-card {
 		background: var(--bg-surface);
 		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
+		border-left: 4px solid var(--text-muted);
+		border-radius: var(--radius);
 		padding: 1rem;
-		margin-bottom: 1.5rem;
+		margin-bottom: 0.75rem;
+		transition: border-color 0.2s;
+	}
+
+	.post-card.kind-need { border-left-color: var(--critical); }
+	.post-card.kind-offer { border-left-color: var(--success); }
+	.post-card.kind-resource { border-left-color: #3b82f6; }
+
+	.post-urgent {
+		animation: urgent-pulse 2s ease-in-out infinite;
+	}
+
+	@keyframes urgent-pulse {
+		0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+		50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15); }
+	}
+
+	.author-link {
+		color: var(--text-muted);
+		font-size: 0.8rem;
+		text-decoration: none;
+	}
+	.author-link:hover { color: var(--accent); text-decoration: underline; }
+
+	.post-images {
+		display: flex;
+		gap: 0.4rem;
+		margin: 0.5rem 0;
+		align-items: center;
+	}
+
+	.post-thumb {
+		width: 80px;
+		height: 80px;
+		object-fit: cover;
+		border-radius: 6px;
+		border: 1px solid var(--border);
+	}
+
+	.more-images {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		background: var(--bg-elevated);
+		padding: 0.2rem 0.5rem;
+		border-radius: 4px;
 	}
 
 	.join-banner p { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.75rem; }
@@ -404,10 +459,55 @@
 	.post-card {
 		background: var(--bg-surface);
 		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
+		border-left: 4px solid var(--text-muted);
+		border-radius: var(--radius);
 		padding: 1rem;
+		margin-bottom: 0.75rem;
+		transition: border-color 0.2s;
 	}
 
+	.post-card.kind-need { border-left-color: var(--critical); }
+	.post-card.kind-offer { border-left-color: var(--success); }
+	.post-card.kind-resource { border-left-color: #3b82f6; }
+
+	.post-urgent {
+		animation: urgent-pulse 2s ease-in-out infinite;
+	}
+
+	@keyframes urgent-pulse {
+		0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+		50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15); }
+	}
+
+	.author-link {
+		color: var(--text-muted);
+		font-size: 0.8rem;
+		text-decoration: none;
+	}
+	.author-link:hover { color: var(--accent); text-decoration: underline; }
+
+	.post-images {
+		display: flex;
+		gap: 0.4rem;
+		margin: 0.5rem 0;
+		align-items: center;
+	}
+
+	.post-thumb {
+		width: 80px;
+		height: 80px;
+		object-fit: cover;
+		border-radius: 6px;
+		border: 1px solid var(--border);
+	}
+
+	.more-images {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		background: var(--bg-elevated);
+		padding: 0.2rem 0.5rem;
+		border-radius: 4px;
+	}
 	.post-meta {
 		display: flex;
 		gap: 0.5rem;
@@ -485,6 +585,59 @@
 		flex-direction: column;
 		gap: 0.5rem;
 		margin-bottom: 0.5rem;
+	}
+
+	.post-card {
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		border-left: 4px solid var(--text-muted);
+		border-radius: var(--radius);
+		padding: 1rem;
+		margin-bottom: 0.75rem;
+		transition: border-color 0.2s;
+	}
+
+	.post-card.kind-need { border-left-color: var(--critical); }
+	.post-card.kind-offer { border-left-color: var(--success); }
+	.post-card.kind-resource { border-left-color: #3b82f6; }
+
+	.post-urgent {
+		animation: urgent-pulse 2s ease-in-out infinite;
+	}
+
+	@keyframes urgent-pulse {
+		0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+		50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15); }
+	}
+
+	.author-link {
+		color: var(--text-muted);
+		font-size: 0.8rem;
+		text-decoration: none;
+	}
+	.author-link:hover { color: var(--accent); text-decoration: underline; }
+
+	.post-images {
+		display: flex;
+		gap: 0.4rem;
+		margin: 0.5rem 0;
+		align-items: center;
+	}
+
+	.post-thumb {
+		width: 80px;
+		height: 80px;
+		object-fit: cover;
+		border-radius: 6px;
+		border: 1px solid var(--border);
+	}
+
+	.more-images {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		background: var(--bg-elevated);
+		padding: 0.2rem 0.5rem;
+		border-radius: 4px;
 	}
 
 	.edit-form input, .edit-form textarea {

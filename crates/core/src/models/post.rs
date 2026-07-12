@@ -63,6 +63,7 @@ pub struct Post {
     pub expires_at: Option<DateTime<Utc>>,
     pub tags: Vec<String>,
     pub contact_method: Option<String>,
+    pub images: Vec<String>,
     pub verified_by: Option<Uuid>,
     pub verified_at: Option<DateTime<Utc>>,
     pub federated_id: Option<String>,

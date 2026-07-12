@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { requireAuth } from '$lib/stores/auth';
 	import { api } from '$lib/api/client';
+	import { encodePiggpinLink } from '$lib/piggpin-encode';
 	import { getActiveServer } from '$lib/stores/server';
 	import { onMount } from 'svelte';
 
@@ -55,26 +56,23 @@
 						try {
 							const community = await api.communities.get(c.slug);
 							if (community.map_community_id) {
+								const lat = community.location_lat ?? nodeInfo.location?.lat;
+								const lon = community.location_lon ?? nodeInfo.location?.lon;
+								const zoom = community.location_lat ? '14' : '10';
 								const payload: Record<string, string> = {
 									cid: community.map_community_id,
 									n: community.name,
 									r: relayUrl,
 									pw: 'false',
 								};
-								if (community.map_secret_hex) {
-									payload.sk = community.map_secret_hex;
-								}
-								if (community.location_lat != null && community.location_lon != null) {
-									payload.lat = String(community.location_lat);
-									payload.lon = String(community.location_lon);
-									payload.zoom = '14';
-								} else if (nodeInfo.location?.lat != null) {
-									payload.lat = String(nodeInfo.location.lat);
-									payload.lon = String(nodeInfo.location.lon);
-									payload.zoom = '10';
+								if (community.map_secret_hex) payload.sk = community.map_secret_hex;
+								if (lat != null && lon != null) {
+									payload.lat = String(lat);
+									payload.lon = String(lon);
+									payload.zoom = zoom;
 								}
 								const b64 = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-							mapIframeSrc = `https://localhost:5174/?embed=1&picker=1#community=${b64}`;
+								mapIframeSrc = `https://app.piggpin.space/?embed=1&picker=1#community=${b64}`;
 								break;
 							}
 						} catch (_) {}
@@ -86,7 +84,7 @@
 
 	function handlePickMessage(event: MessageEvent) {
 		console.log('[rev] ANY msg:', event.origin, typeof event.data, event.data?.type);
-		if (event.origin !== 'https://localhost:5174') return;
+		if (event.origin !== 'https://app.piggpin.space') return;
 		console.log('[rev] pick message:', event.data);
 		if (event.data?.type === 'piggpin:location-picked') {
 			locationLat = event.data.lat;
@@ -107,7 +105,7 @@
 					category,
 					urgency: kind === 'need' ? urgency : null,
 					contact: contactMethod
-				}, 'https://localhost:5174');
+				}, 'https://app.piggpin.space');
 			} catch (_) {}
 		}
 	}
@@ -134,7 +132,7 @@
 				sendPinDetails();
 				const iframe = document.querySelector('iframe');
 				if (iframe?.contentWindow) {
-					try { iframe.contentWindow.postMessage({ type: 'komun:submit' }, 'https://localhost:5174'); } catch (_) {}
+					try { iframe.contentWindow.postMessage({ type: 'komun:submit' }, 'https://app.piggpin.space'); } catch (_) {}
 				}
 				goto(`/c/${selectedCommunity}`);
 			} catch (e: any) {

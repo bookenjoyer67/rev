@@ -1,19 +1,25 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { auth, getActiveAuth, getPublicKey, isAuthenticated, setPassphrase, updateDisplayName, logout } from '$lib/stores/auth';
-	import { isConnected, serverState, disconnectServer, removeServer } from '$lib/stores/server';
+	import { auth, getActiveAuth, getPublicKey, getToken, isAuthenticated, setPassphrase, updateDisplayName, logout } from '$lib/stores/auth';
+	import { isConnected, getActiveServer, serverState, disconnectServer, removeServer } from '$lib/stores/server';
 	import { themeName } from '$lib/stores/theme';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
 
 	let displayName = $state('');
+	let bio = $state('');
+	let avatarUrl = $state('');
 	let passphrase = $state('');
 	let passphraseConfirm = $state('');
 	let saving = $state(false);
 	let saved = $state(false);
+	let bioSaving = $state(false);
+	let bioSaved = $state(false);
+	let avatarUploading = $state(false);
 	let passphraseSaving = $state(false);
 	let passphraseSaved = $state(false);
 	let error = $state('');
+	let bioError = $state('');
 	let passphraseError = $state('');
 	let copied = $state(false);
 	let showTheme = $state(false);
@@ -21,9 +27,23 @@
 	let publicKey = $derived(getPublicKey() || '');
 	let hasBundle = $derived(!!$auth.keypair?.ed25519SecretKey);
 
-	onMount(() => {
+	onMount(async () => {
 		if (!isConnected() || !isAuthenticated()) { goto('/'); return; }
-		displayName = getActiveAuth()?.displayName || '';
+		const server = getActiveServer();
+		const token = getToken();
+		if (server && token) {
+			try {
+				const res = await fetch(`${server}/api/auth/me`, {
+					headers: { 'Authorization': `Bearer ${token}` }
+				});
+				if (res.ok) {
+					const data = await res.json();
+					displayName = data.display_name || '';
+					bio = data.bio || '';
+					avatarUrl = data.avatar_url || '';
+				}
+			} catch {}
+		}
 	});
 
 	async function saveName() {
@@ -34,6 +54,51 @@
 		saving = false;
 		if (ok) { saved = true; setTimeout(() => saved = false, 2000); }
 		else { error = 'Failed to update name'; }
+	}
+
+	async function saveBio() {
+		bioSaving = true;
+		bioError = '';
+		try {
+			const server = getActiveServer();
+			const token = getToken();
+			const res = await fetch(`${server}/api/auth/me`, {
+				method: 'PUT',
+				headers: {
+					'Content-Type': 'application/json',
+					'Authorization': `Bearer ${token}`,
+				},
+				body: JSON.stringify({ bio: bio.trim() || null }),
+			});
+			bioSaving = false;
+			if (res.ok) { bioSaved = true; setTimeout(() => bioSaved = false, 2000); }
+			else { bioError = 'Failed to save bio'; }
+		} catch {
+			bioSaving = false;
+			bioError = 'Network error';
+		}
+	}
+
+	async function handleAvatarUpload(e: Event) {
+		const file = (e.target as HTMLInputElement).files?.[0];
+		if (!file) return;
+		avatarUploading = true;
+		try {
+			const formData = new FormData();
+			formData.append('file', file);
+			const server = getActiveServer();
+			const token = getToken();
+			const res = await fetch(`${server}/api/auth/me/avatar`, {
+				method: 'POST',
+				headers: { 'Authorization': `Bearer ${token}` },
+				body: formData,
+			});
+			if (res.ok) {
+				const data = await res.json();
+				avatarUrl = data.avatar_url;
+			}
+		} catch {}
+		avatarUploading = false;
 	}
 
 	async function savePassphrase() {
@@ -70,12 +135,39 @@
 	<h1>Account</h1>
 
 	<section class="section">
+		<h2>Profile Picture</h2>
+		<div class="avatar-section">
+			{#if avatarUrl}
+				<img src={avatarUrl} alt="Your avatar" class="avatar-preview" />
+			{:else}
+				<div class="avatar-placeholder">{displayName[0]?.toUpperCase() || '?'}</div>
+			{/if}
+			<label class="upload-label">
+				{avatarUploading ? 'Uploading...' : 'Upload photo'}
+				<input type="file" accept="image/png,image/jpeg,image/webp" onchange={handleAvatarUpload} disabled={avatarUploading} class="file-input" />
+			</label>
+			<p class="hint">PNG, JPEG, or WebP. Max 1MB. EXIF data is stripped.</p>
+		</div>
+	</section>
+
+	<section class="section">
 		<h2>Display Name</h2>
 		<form onsubmit={(e) => { e.preventDefault(); saveName(); }}>
 			<input type="text" bind:value={displayName} maxlength="50" />
 			{#if error}<p class="error">{error}</p>{/if}
 			<button type="submit" class="save-btn" disabled={saving}>
 				{saving ? 'Saving...' : saved ? 'Saved!' : 'Update Name'}
+			</button>
+		</form>
+	</section>
+
+	<section class="section">
+		<h2>Bio</h2>
+		<form onsubmit={(e) => { e.preventDefault(); saveBio(); }}>
+			<textarea bind:value={bio} maxlength="500" placeholder="Tell communities about yourself..." rows="4"></textarea>
+			{#if bioError}<p class="error">{bioError}</p>{/if}
+			<button type="submit" class="save-btn" disabled={bioSaving}>
+				{bioSaving ? 'Saving...' : bioSaved ? 'Saved!' : 'Save Bio'}
 			</button>
 		</form>
 	</section>
@@ -156,11 +248,52 @@
 	.hint { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem; }
 
 	form { display: flex; flex-direction: column; gap: 0.6rem; max-width: 400px; }
-	input { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem; color: var(--text); font-size: 1rem; }
-	input:focus { outline: none; border-color: var(--accent); }
+	input, textarea { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem; color: var(--text); font-size: 1rem; font-family: inherit; }
+	input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 
 	.save-btn { background: var(--accent); color: var(--text-on-accent); padding: 0.6rem; border-radius: var(--radius); font-weight: 600; }
 	.save-btn:disabled { opacity: 0.6; }
+
+	.avatar-section {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.avatar-preview {
+		width: 96px;
+		height: 96px;
+		border-radius: 50%;
+		object-fit: cover;
+		border: 2px solid var(--border);
+	}
+
+	.avatar-placeholder {
+		width: 96px;
+		height: 96px;
+		border-radius: 50%;
+		background: var(--bg-elevated);
+		border: 2px solid var(--border);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 2.5rem;
+		font-weight: 700;
+		color: var(--text-muted);
+	}
+
+	.upload-label {
+		background: var(--bg-elevated);
+		color: var(--text);
+		padding: 0.4rem 0.8rem;
+		border-radius: var(--radius);
+		font-size: 0.85rem;
+		border: 1px solid var(--border);
+		cursor: pointer;
+	}
+
+	.file-input { display: none; }
 
 	.key-display {
 		display: flex;

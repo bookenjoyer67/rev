@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+name="komun"
+description="Komun mutual aid API server"
+command="/opt/komun/komun-server"
+command_args=""
+pidfile="/var/run/komun.pid"
+command_background=true
+command_user="komun"
+directory="/opt/komun"
+
+depend() {
+    need net
+    need postgresql
+    use nginx
+}

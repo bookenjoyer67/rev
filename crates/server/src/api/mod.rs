@@ -3,12 +3,15 @@ mod reports;
 mod admin;
 mod communities;
 mod conversations;
+mod endorsements;
 mod posts;
 mod health;
 mod node;
 mod notifications;
 mod geocode;
+mod search;
 pub mod directory;
+mod users;
 
 use axum::Router;
 
@@ -25,7 +28,9 @@ pub fn router(state: AppState) -> Router {
         .merge(admin::router(state.clone()))
         .merge(alliances::router(state.clone()))
         .merge(reports::router(state.clone()))
+        .merge(search::router(state.clone()))
         .nest("/auth", auth::router(state.clone()))
+        .nest("/users", users::router(state.clone()).merge(endorsements::router(state.clone())))
         .nest("/communities", communities::router(state.clone()))
         .nest("/communities/{slug}/posts", posts::router(state.clone()));
 

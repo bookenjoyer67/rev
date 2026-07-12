@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import Onboarding from '$lib/components/Onboarding.svelte';
+	import SearchBar from '$lib/components/SearchBar.svelte';
 	import { auth, isAuthenticated, getToken, refreshRole, initAuth } from '$lib/stores/auth';
 	import { serverState, getActiveServer } from '$lib/stores/server';
 	import { initTheme } from '$lib/stores/theme';
@@ -70,6 +71,8 @@
 <header>
 	<nav class="container">
 		<a href="/" class="logo" onclick={closeMenu}>komun</a>
+
+		<SearchBar />
 
 		<button class="hamburger" class:open={menuOpen} onclick={() => menuOpen = !menuOpen} aria-label="Menu">
 			<span></span><span></span><span></span>

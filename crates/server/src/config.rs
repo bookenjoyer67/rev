@@ -13,6 +13,7 @@ pub struct Config {
     pub security: SecurityConfig,
     pub posts: PostsConfig,
     pub admin: AdminConfig,
+    pub media: MediaConfig,
     pub relay: RelayConfig,
 }
 
@@ -131,6 +132,28 @@ impl Default for AdminConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MediaConfig {
+    pub avatar_dir: String,
+    pub max_avatar_bytes: u64,
+    pub post_images_dir: String,
+    pub max_post_image_bytes: u64,
+    pub max_post_images: u32,
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        Self {
+            avatar_dir: "data/avatars".into(),
+            max_avatar_bytes: 1_048_576,
+            post_images_dir: "data/post-images".into(),
+            max_post_image_bytes: 5_242_880,
+            max_post_images: 5,
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -143,6 +166,7 @@ impl Default for Config {
             security: SecurityConfig::default(),
             posts: PostsConfig::default(),
             admin: AdminConfig::default(),
+            media: MediaConfig::default(),
             relay: RelayConfig::default(),
         }
     }
