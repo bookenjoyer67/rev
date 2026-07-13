@@ -10,6 +10,7 @@
 
 	let { post }: Props = $props();
 	let showModal = $state(false);
+	let showMap = $state(false);
 
 	let myUserId = $derived((() => {
 		const server = getActiveServer();
@@ -56,15 +57,34 @@
 
 	<div class="footer">
 		<span class="community">{post.community_name}</span>
-		{#if post.author_id !== myUserId}
-			<button class="btn-primary respond-btn" onclick={() => showModal = true}>
-				{#if post.kind === 'need'}I can help{:else if post.kind === 'offer'}Request this{:else}Respond{/if}
-			</button>
-		{:else}
-			<span class="your-post">Your post</span>
-		{/if}
-	</div>
-</article>
+		<div class="footer-actions">
+			{#if post.location_name || (post.location_lat != null && post.location_lon != null)}
+				<button class="map-btn" onclick={() => showMap = true} title="View on map">📍</button>
+			{/if}
+			{#if post.author_id !== myUserId}
+				<button class="btn-primary respond-btn" onclick={() => showModal = true}>
+					{#if post.kind === 'need'}I can help{:else if post.kind === 'offer'}Request this{:else}Respond{/if}
+				</button>
+				{:else}
+				<span class="your-post">Your post</span>
+				{/if}
+				</div>
+				</div>
+				</article>
+
+				{#if showMap}
+				<div class="map-overlay" role="dialog" onclick={() => showMap = false}>
+				<div class="map-popout" onclick={(e) => e.stopPropagation()}>
+				<button class="map-close" onclick={() => showMap = false}>&times;</button>
+				<iframe
+					title="Post location"
+					src={post.location_lat != null && post.location_lon != null
+						? `https://www.openstreetmap.org/export/embed.html?bbox=${post.location_lon - 0.01},${post.location_lat - 0.005},${post.location_lon + 0.01},${post.location_lat + 0.005}&layer=mapnik&marker=${post.location_lat},${post.location_lon}`
+						: `https://www.openstreetmap.org/export/embed.html?bbox=-0.01,-0.005,0.01,0.005&layer=mapnik`}
+				></iframe>
+				</div>
+				</div>
+				{/if}
 
 {#if showModal}
 	<RespondModal
@@ -146,6 +166,74 @@
 		margin-top: var(--space-3);
 		padding-top: var(--space-3);
 		border-top: 1px solid var(--border);
+	}
+
+	.footer-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+
+	.map-btn {
+		background: var(--bg-elevated);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		padding: 0.25rem 0.5rem;
+		font-size: 0.9rem;
+		min-height: unset;
+		min-width: unset;
+		cursor: pointer;
+		transition: border-color var(--transition-fast);
+	}
+
+	.map-btn:hover { border-color: var(--accent); }
+
+	.map-overlay {
+		position: fixed;
+		inset: 0;
+		background: var(--overlay);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 1000;
+		padding: 1rem;
+	}
+
+	.map-popout {
+		position: relative;
+		width: 100%;
+		max-width: 500px;
+		aspect-ratio: 1;
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		overflow: hidden;
+	}
+
+	.map-popout iframe {
+		width: 100%;
+		height: 100%;
+		border: none;
+	}
+
+	.map-close {
+		position: absolute;
+		top: 0.5rem;
+		right: 0.5rem;
+		z-index: 1;
+		background: var(--bg-surface);
+		color: var(--text);
+		border: 1px solid var(--border);
+		border-radius: 50%;
+		width: 28px;
+		height: 28px;
+		font-size: 1rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		min-height: unset;
+		min-width: unset;
 	}
 
 	.community {

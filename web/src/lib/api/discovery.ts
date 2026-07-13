@@ -40,6 +40,8 @@ export interface AggregatedPost {
 	title: string;
 	body?: string;
 	location_name?: string;
+	location_lat?: number;
+	location_lon?: number;
 	urgency?: string;
 	status: string;
 	author_id: string;
