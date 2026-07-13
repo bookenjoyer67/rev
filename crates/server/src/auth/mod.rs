@@ -196,7 +196,8 @@ async fn register(
     let recovery_code_hash_bytes = input.recovery_code_hash.as_ref().and_then(|k| decode_b64(k).ok());
 
     let err = |e: sqlx::Error| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()})))
+        tracing::error!("register db error: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"})))
     };
 
     let existing = sqlx::query_scalar::<_, Uuid>("SELECT id FROM users WHERE public_key = $1")
@@ -270,7 +271,10 @@ async fn register(
         user_id,
         &role,
     )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    .map_err(|e| {
+        tracing::error!("token creation error: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"})))
+    })?;
 
     Ok(Json(AuthResponse {
         token,
@@ -296,7 +300,10 @@ async fn recover(
     .bind(&recovery_id)
     .fetch_optional(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?
+    .map_err(|e| {
+        tracing::error!("recover db error: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"})))
+    })?
     .ok_or((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "no identity found for this passphrase"}))))?;
 
     let bundle = row.encrypted_key_bundle
@@ -367,11 +374,14 @@ async fn verify_challenge(
     let sig_bytes = decode_b64(&input.signature)?;
 
     let public_key: Vec<u8> = sqlx::query_scalar("SELECT public_key FROM users WHERE id = $1")
-        .bind(input.user_id)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?
-        .ok_or((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "user not found"}))))?;
+    .bind(input.user_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("verify_challenge db error: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"})))
+    })?
+    .ok_or((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "user not found"}))))?;
 
     let key: [u8; 32] = public_key.try_into()
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "invalid public key"}))))?;
@@ -402,7 +412,10 @@ async fn me(
         .bind(user_id)
         .fetch_optional(&state.pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?
+        .map_err(|e| {
+            tracing::error!("me db error: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"})))
+        })?
         .ok_or((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "user not found"}))))?;
 
     Ok(Json(AuthResponse {
@@ -447,6 +460,15 @@ async fn update_profile(
     let recovery_code_hash = input.recovery_code_hash
         .as_ref()
         .and_then(|k| if k.is_empty() { None } else { decode_b64(k).ok() });
+    if let Some(ref pj) = input.profile_json {
+        let serialized = serde_json::to_string(&pj).unwrap_or_default();
+        if serialized.len() > 8192 {
+            return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "profile_json must be under 8KB"})),
+            ));
+        }
+    }
 
     sqlx::query(
         "UPDATE users SET display_name = COALESCE($1, display_name),
@@ -471,7 +493,10 @@ async fn update_profile(
     .bind(user_id)
     .execute(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    .map_err(|e| {
+        tracing::error!("update_profile db error: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"})))
+    })?;
 
     Ok(Json(serde_json::json!({"ok": true})))
 }
@@ -605,7 +630,10 @@ async fn get_user_keys(
     .bind(id)
     .fetch_optional(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?
+    .map_err(|e| {
+        tracing::error!("get_user_keys db error: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"})))
+    })?
     .ok_or((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "user not found"}))))?;
 
     Ok(Json(UserKeysResponse {

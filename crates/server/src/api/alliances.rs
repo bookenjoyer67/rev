@@ -44,7 +44,7 @@ async fn list_alliances(
 
 async fn propose_alliance(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthUser>,
+    Extension(_auth): Extension<AuthUser>,
     Json(input): Json<ProposeRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let domain = input.remote_domain.trim().to_lowercase();

@@ -94,7 +94,7 @@ async fn update_post(
 ) -> Result<Json<serde_json::Value>, StatusError> {
     let post = crate::db::posts::get(&state.pool, id).await?;
     if post.author_id != auth.user_id {
-        return Ok(Json(serde_json::json!({"error": "not your post"})));
+        return Err(StatusError::with_status(StatusCode::FORBIDDEN, "not your post"));
     }
     crate::db::posts::update(&state.pool, id, input.title, input.body, input.urgency, input.status).await?;
     Ok(Json(serde_json::json!({"status": "updated"})))
@@ -107,7 +107,8 @@ async fn withdraw_post(
 ) -> Result<Json<serde_json::Value>, StatusError> {
     let post = crate::db::posts::get(&state.pool, id).await?;
     if post.author_id != auth.user_id {
-        return Ok(Json(serde_json::json!({"error": "not your post"})));
+        return Err(StatusError::with_status(StatusCode::FORBIDDEN, "not your post"));
+
     }
     crate::db::posts::withdraw(&state.pool, id).await?;
     Ok(Json(serde_json::json!({"status": "withdrawn"})))

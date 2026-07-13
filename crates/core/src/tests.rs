@@ -185,6 +185,7 @@ mod tests {
             visibility: Visibility::Public,
             expires_at: None,
             tags: vec![],
+            images: vec![],
             contact_method: None,
             verified_by: None,
             verified_at: None,

@@ -120,22 +120,6 @@ pub struct MqttConfig {
     #[serde(default = "d_mqtt_room")] pub bridge_room: String,
     #[serde(default = "d_false")] pub uplink_enabled: bool,
 }
-fn d_mqtt_port() -> u16 { 1883 }
-fn d_mqtt_addr() -> String { "mqtt.meshtastic.org".into() }
-fn d_mqtt_root() -> String { "msh".into() }
-fn d_empty() -> String { String::new() }
-fn d_mqtt_room() -> String { "mesh".into() }
-#[cfg(feature = "mqtt-bridge")]
-impl Default for MqttConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false, port: 1883, broker: "mqtt.meshtastic.org".into(),
-            username: String::new(), password: String::new(),
-            root_topic: "msh".into(),
-            bridge_room: "mesh".into(), uplink_enabled: false,
-        }
-    }
-}
 
 #[cfg(feature = "rnode-bridge")]
 #[derive(Debug, Deserialize, Clone)]
@@ -147,8 +131,6 @@ pub struct RnodeConfig {
 }
 fn d_false() -> bool { false }
 fn d_true() -> bool { true }
-fn d_115200() -> u32 { 115200 }
-fn d_rnode_room() -> String { "rnode".into() }
 #[cfg(feature = "rnode-bridge")]
 impl Default for RnodeConfig {
     fn default() -> Self {
@@ -165,9 +147,9 @@ pub struct PeerRelayConfig {
     #[serde(default = "d_reconnect_delay")] pub reconnect_delay_secs: u64,
     #[serde(default = "d_max_backoff")] pub max_reconnect_delay_secs: u64,
 }
-fn d_announce_interval() -> u64 { 300 }
-fn d_reconnect_delay() -> u64 { 30 }
-fn d_max_backoff() -> u64 { 300 }
+
+
+
 #[cfg(feature = "peer-relay")]
 impl Default for PeerRelayConfig {
     fn default() -> Self {

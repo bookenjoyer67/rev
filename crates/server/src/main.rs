@@ -47,9 +47,9 @@ async fn main() -> anyhow::Result<()> {
 
     std::env::set_var("JWT_SECRET", &config.auth.jwt_secret);
 
-    if config.auth.jwt_secret.len() < 32 {
+    if config.auth.jwt_secret.len() < 40 {
         anyhow::bail!(
-            "JWT_SECRET is too short (< 32 chars). Set it in config.toml [auth] jwt_secret or via the JWT_SECRET environment variable. Generate with: openssl rand -base64 48"
+            "JWT_SECRET is too short (< 40 chars). Set it in config.toml [auth] jwt_secret or via the JWT_SECRET environment variable. Generate with: openssl rand -base64 48"
         );
     }
 

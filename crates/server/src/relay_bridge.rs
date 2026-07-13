@@ -31,14 +31,6 @@ pub async fn spawn_relay(relay_config: RelayConfig, store: Arc<PersistentStore>)
         rl: Mutex::new(komun_relay::rate::RateLimiter::new(config.rate_limit.clone())),
         config: config.clone(),
         store: store.clone(),
-        #[cfg(feature = "mqtt-bridge")]
-        mesh_uplink: tokio::sync::RwLock::new(None),
-        #[cfg(feature = "reticulum-bridge")]
-        reticulum_inject: tokio::sync::RwLock::new(None),
-        #[cfg(feature = "mqtt-bridge")]
-        mqtt_client: tokio::sync::RwLock::new(None),
-        #[cfg(feature = "peer-relay")]
-        peer_relay_txs: tokio::sync::RwLock::new(std::collections::HashMap::new()),
         conn_semaphore: Arc::new(tokio::sync::Semaphore::new(max_conn)),
         start_time: Instant::now(),
         connections_accepted: AtomicU64::new(0),
