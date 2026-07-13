@@ -72,17 +72,18 @@
 	{#if !hasLocation() && !$location.lat}
 		<section class="hero">
 			<h1>komun</h1>
-			<p class="tagline">Find mutual aid near you</p>
+			<p class="tagline">Mutual aid, organized.</p>
 			<div class="location-prompt">
 				<LocationBar {onLocationSet} />
 			</div>
 			<p class="manual-link">
 				<a href="/connect">Or connect to a specific server</a>
 			</p>
-			<p class="manual-link">
-				Looking to organize? <button class="link-btn" onclick={startCommunity}>Start a community</button>
-			</p>
 		</section>
+
+		<div class="hero-divider">
+			<span class="divider-diamond">&#9670;</span>
+		</div>
 	{:else}
 		<div class="feed-header">
 			<LocationBar {onLocationSet} />
@@ -139,22 +140,34 @@
 <style>
 	.hero {
 		text-align: center;
-		padding: 4rem 0 2rem;
+		padding: var(--space-10) 0 var(--space-6);
 		max-width: 440px;
 		margin: 0 auto;
 	}
 
 	h1 {
-		font-size: 2.5rem;
+		font-size: var(--text-4xl);
 		font-weight: 800;
-		letter-spacing: -1px;
-		margin-bottom: 0.5rem;
+		letter-spacing: -1.5px;
+		font-family: 'Space Grotesk', sans-serif;
+		margin-bottom: 0.25rem;
 	}
 
 	.tagline {
 		color: var(--text-muted);
-		font-size: 1.1rem;
-		margin-bottom: 2rem;
+		font-size: var(--text-lg);
+		margin-bottom: var(--space-6);
+	}
+
+	.hero-divider {
+		text-align: center;
+		padding-bottom: var(--space-6);
+	}
+
+	.divider-diamond {
+		color: var(--accent);
+		font-size: 0.6rem;
+		opacity: 0.4;
 	}
 
 	.location-prompt {
@@ -198,6 +211,18 @@
 		gap: 0.75rem;
 	}
 
+	.feed :global(li:nth-child(odd) .aid-card) {
+		transform: rotate(-0.4deg);
+	}
+
+	.feed :global(li:nth-child(even) .aid-card) {
+		transform: rotate(0.3deg);
+	}
+
+	.feed :global(.aid-card:hover) {
+		transform: translateY(-3px) rotate(0deg) !important;
+	}
+
 	.feed-footer {
 		text-align: center;
 		color: var(--text-muted);
@@ -205,6 +230,23 @@
 		margin-top: 1.5rem;
 		padding-top: 1rem;
 		border-top: 1px solid var(--border);
+	}
+
+	.link-btn {
+		background: none;
+		color: var(--accent);
+		font-size: inherit;
+		font-weight: 600;
+		text-decoration: underline;
+		text-underline-offset: 2px;
+		padding: 0;
+		min-height: unset;
+		min-width: unset;
+	}
+
+	.link-btn:hover {
+		opacity: 0.8;
+		text-decoration: underline;
 	}
 
 	.status {
@@ -228,38 +270,48 @@
 		justify-content: center;
 		margin: 1rem 0;
 	}
-
-	.community-link {
+	.filters button {
 		background: var(--bg-surface);
+		color: var(--text-muted);
+		padding: 0.4rem 0.8rem;
+		border-radius: var(--radius-full);
+		font-size: var(--text-xs);
 		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		padding: 0.5rem 1rem;
-		font-size: 0.9rem;
-		color: var(--text);
 	}
 
-	.community-link:hover {
+	.filters button.active {
+		background: var(--accent-soft);
+		color: var(--accent);
 		border-color: var(--accent);
-		text-decoration: none;
 	}
 
 	.start-btn {
 		background: var(--accent);
 		color: var(--text-on-accent);
 		padding: 0.75rem 1.5rem;
-		border-radius: var(--radius);
-		font-weight: 600;
-		font-size: 1rem;
+		border-radius: var(--radius-full);
+		font-weight: 700;
+		font-size: var(--text-base);
 		margin-top: 1rem;
+		transition: transform var(--transition-fast);
 	}
 
-	.link-btn {
-		background: none;
-		color: var(--accent);
-		font-size: inherit;
-		text-decoration: underline;
-		padding: 0;
+	.start-btn:hover {
+		transform: translateY(-1px);
 	}
 
-	.link-btn:hover { opacity: 0.8; }
+	.community-link {
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-full);
+		padding: 0.5rem 1rem;
+		font-size: var(--text-sm);
+		color: var(--text);
+		transition: border-color var(--transition-fast);
+	}
+
+	.community-link:hover {
+		border-color: var(--accent);
+		text-decoration: none;
+	}
 </style>

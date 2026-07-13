@@ -1,9 +1,10 @@
 <script lang="ts">
 	import '../app.css';
+	import '$lib/design/tokens.css';
 	import { onMount } from 'svelte';
 	import Onboarding from '$lib/components/Onboarding.svelte';
 	import SearchBar from '$lib/components/SearchBar.svelte';
-	import { auth, isAuthenticated, getToken, refreshRole, initAuth } from '$lib/stores/auth';
+	import { auth, isAuthenticated, getToken, refreshRole, initAuth, showOnboarding } from '$lib/stores/auth';
 	import { serverState, getActiveServer } from '$lib/stores/server';
 	import { initTheme } from '$lib/stores/theme';
 
@@ -70,12 +71,19 @@
 
 <header>
 	<nav class="container">
-		<a href="/" class="logo" onclick={closeMenu}>komun</a>
+		<a href="/" class="logo" onclick={closeMenu}>
+			<svg class="logo-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+				<circle cx="8" cy="12" r="5"/>
+				<circle cx="16" cy="12" r="5"/>
+				<circle cx="12" cy="8" r="5"/>
+			</svg>
+			<span class="logo-text">komun</span>
+		</a>
 
 		<SearchBar />
 
 		<button class="hamburger" class:open={menuOpen} onclick={() => menuOpen = !menuOpen} aria-label="Menu">
-			<span></span><span></span><span></span>
+			<span class="h-square"></span><span class="h-square"></span><span class="h-square"></span>
 		</button>
 
 		<div class="nav-links" class:show={menuOpen}>
@@ -96,6 +104,9 @@
 				{/if}
 			{/if}
 			<a href="/connect" onclick={closeMenu}>Connect</a>
+			{#if $serverState.active && !$auth.servers?.[$serverState.active]}
+				<button class="join-link" onclick={() => { closeMenu(); showOnboarding.set(true); }}>Join</button>
+			{/if}
 			{#if $serverState.active && $auth.servers?.[$serverState.active]}
 				<a href="/account" class="identity" onclick={closeMenu}>{$auth.servers[$serverState.active].displayName}</a>
 			{/if}
@@ -126,11 +137,12 @@
 
 <style>
 	header {
-		border-bottom: 1px solid var(--border);
-		padding: 0.75rem 0;
+		border-bottom: 1px solid var(--accent);
+		padding: 0.6rem 0;
 		position: sticky;
 		top: 0;
 		background: var(--bg);
+		backdrop-filter: blur(8px);
 		z-index: 100;
 	}
 
@@ -142,22 +154,31 @@
 	}
 
 	.logo {
-		font-size: 1.4rem;
-		font-weight: 700;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-family: 'Space Grotesk', sans-serif;
+		font-size: 1.3rem;
+		font-weight: 800;
 		color: var(--text);
 		letter-spacing: -0.5px;
 		z-index: 2;
+		text-decoration: none;
 	}
 
 	.logo:hover {
-		text-decoration: none;
 		color: var(--accent);
+		text-decoration: none;
+	}
+
+	.logo-icon {
+		flex-shrink: 0;
 	}
 
 	.hamburger {
 		display: none;
 		flex-direction: column;
-		gap: 5px;
+		gap: 4px;
 		background: none;
 		padding: 8px;
 		z-index: 2;
@@ -167,41 +188,45 @@
 		justify-content: center;
 	}
 
-	.hamburger span {
+	.h-square {
 		display: block;
-		width: 22px;
-		height: 2px;
+		width: 5px;
+		height: 5px;
 		background: var(--text);
+		border-radius: 1px;
 		transition: all 0.2s;
 	}
 
-	.hamburger.open span:nth-child(1) {
-		transform: rotate(45deg) translate(5px, 5px);
+	.hamburger.open .h-square:nth-child(1) {
+		transform: translate(6px, 4px);
 	}
-
-	.hamburger.open span:nth-child(2) {
-		opacity: 0;
+	.hamburger.open .h-square:nth-child(2) {
+		transform: scale(0);
 	}
-
-	.hamburger.open span:nth-child(3) {
-		transform: rotate(-45deg) translate(5px, -5px);
+	.hamburger.open .h-square:nth-child(3) {
+		transform: translate(-6px, -4px);
 	}
 
 	.nav-links {
 		display: flex;
-		gap: 1.5rem;
+		gap: 0.35rem;
 		align-items: center;
 	}
 
 	.nav-links a {
-		color: var(--text-muted);
-		font-size: 0.9rem;
-		padding: 0.25rem 0;
+		color: var(--text);
+		font-size: 0.85rem;
+		padding: 0.35rem 0.7rem;
+		border-radius: var(--radius-full);
+		transition: background var(--transition-fast), color var(--transition-fast);
+		opacity: 0.8;
 	}
 
 	.nav-links a:hover {
+		background: var(--button-ghost-hover);
 		color: var(--text);
 		text-decoration: none;
+		opacity: 1;
 	}
 
 	.notif-link {
@@ -210,19 +235,25 @@
 
 	.notif-badge {
 		position: absolute;
-		top: -8px;
-		right: -12px;
+		top: -4px;
+		right: -6px;
 		background: var(--critical);
 		color: var(--text-on-critical);
-		font-size: 0.65rem;
+		font-size: 0.6rem;
 		font-weight: 700;
-		min-width: 16px;
-		height: 16px;
-		border-radius: 8px;
+		min-width: 18px;
+		height: 18px;
+		border-radius: var(--radius-full);
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		padding: 0 4px;
+		padding: 0 5px;
+		animation: badge-pulse 2s ease-in-out infinite;
+	}
+
+	@keyframes badge-pulse {
+		0%, 100% { transform: scale(1); }
+		50% { transform: scale(1.1); }
 	}
 
 	.admin-link {
@@ -230,13 +261,28 @@
 		font-weight: 600;
 	}
 
+	.join-link {
+		background: var(--accent);
+		color: var(--text-on-accent);
+		font-size: 0.8rem;
+		font-weight: 700;
+		padding: 0.35rem 0.8rem;
+		border-radius: var(--radius-full);
+		transition: transform var(--transition-fast), opacity var(--transition-fast);
+	}
+
+	.join-link:hover {
+		transform: translateY(-1px);
+		opacity: 0.9;
+	}
+
 	.identity {
 		color: var(--success) !important;
-		font-size: 0.85rem;
+		font-size: 0.8rem;
 		font-weight: 600;
-		padding: 0.25rem 0.6rem;
+		padding: 0.3rem 0.7rem;
 		background: var(--success-softer);
-		border-radius: var(--radius);
+		border-radius: var(--radius-full);
 	}
 
 	.identity:hover {
@@ -245,7 +291,13 @@
 	}
 
 	main {
-		padding: 1.5rem 0;
+		padding: var(--space-5) 0;
+		animation: page-in var(--transition-slow) ease;
+	}
+
+	@keyframes page-in {
+		from { opacity: 0; transform: translateY(4px); }
+		to   { opacity: 1; transform: translateY(0); }
 	}
 
 	.offline-banner {
@@ -280,7 +332,7 @@
 		background: var(--accent);
 		color: var(--text-on-accent);
 		padding: 0.4rem 1rem;
-		border-radius: var(--radius);
+		border-radius: var(--radius-full);
 		font-weight: 600;
 		font-size: 0.85rem;
 	}
@@ -302,13 +354,13 @@
 		.nav-links {
 			display: none;
 			position: fixed;
-			top: 50px;
+			top: 48px;
 			left: 0;
 			right: 0;
 			flex-direction: column;
 			background: var(--bg-surface);
 			border-bottom: 1px solid var(--border);
-			padding: 1rem;
+			padding: var(--space-3);
 			gap: 0;
 			z-index: 100;
 		}
@@ -318,9 +370,10 @@
 		}
 
 		.nav-links a {
-			padding: 0.75rem 0;
-			font-size: 1rem;
+			padding: 0.75rem 0.7rem;
+			font-size: var(--text-base);
 			border-bottom: 1px solid var(--border);
+			border-radius: 0;
 			width: 100%;
 		}
 

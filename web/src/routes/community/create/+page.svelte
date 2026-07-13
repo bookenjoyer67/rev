@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { requireAuth } from '$lib/stores/auth';
+	import { requireAuth, getToken } from '$lib/stores/auth';
 	import { getActiveServer } from '$lib/stores/server';
 	import { api } from '$lib/api/client';
 
@@ -15,6 +15,9 @@
 	let resolvedLon: number | null = $state(null);
 	let geocoding = $state(false);
 	let debounceTimer: ReturnType<typeof setTimeout> | null = $state(null);
+	let imageFile: File | null = $state(null);
+	let imagePreview: string | null = $state(null);
+	let uploadingImage = $state(false);
 
 	async function geocodeCoords(query: string): Promise<{ lat: number; lon: number; display_name: string } | null> {
 		const serverUrl = getActiveServer();
@@ -70,6 +73,33 @@
 		}
 	}
 
+	function handleImage(e: Event) {
+		const file = (e.target as HTMLInputElement).files?.[0];
+		if (!file) return;
+		if (!file.type.match(/image\/(png|jpeg|webp)/)) {
+			error = 'Image must be PNG, JPEG, or WebP';
+			return;
+		}
+		imageFile = file;
+		imagePreview = URL.createObjectURL(file);
+	}
+
+	async function uploadImage(slug: string, token: string): Promise<string | null> {
+		if (!imageFile) return null;
+		const server = getActiveServer();
+		if (!server) return null;
+		const formData = new FormData();
+		formData.append('file', imageFile);
+		const res = await fetch(`${server}/api/communities/${slug}/image`, {
+			method: 'POST',
+			headers: { 'Authorization': `Bearer ${token}` },
+			body: formData,
+		});
+		if (!res.ok) return null;
+		const data = await res.json();
+		return data.image_url || null;
+	}
+
 	function submit() {
 		requireAuth(async () => {
 			if (!name.trim()) { error = 'Name is required'; return; }
@@ -85,6 +115,10 @@
 					location_lat: resolvedLat,
 					location_lon: resolvedLon,
 				});
+				if (imageFile) {
+					uploadingImage = true;
+					await uploadImage(community.slug, getToken() || '');
+				}
 				goto(`/c/${community.slug}`);
 			} catch (e: any) {
 				error = e.message || 'Failed to create community';
@@ -113,6 +147,20 @@
 		<label>
 			<span>Description</span>
 			<textarea bind:value={description} placeholder="What is this community about?" rows="3"></textarea>
+		</label>
+
+		<label>
+			<span>Image (optional)</span>
+			<div class="image-upload">
+				{#if imagePreview}
+					<img src={imagePreview} alt="Preview" class="image-preview" />
+				{/if}
+				<input type="file" accept="image/png,image/jpeg,image/webp" onchange={handleImage} class="file-input" />
+				<button type="button" class="btn-ghost upload-btn" onclick={() => (document.querySelector('.file-input') as HTMLInputElement)?.click()}>
+					{imagePreview ? 'Change image' : 'Choose image'}
+				</button>
+			</div>
+			<small>PNG, JPEG, or WebP. Max 1MB. Will be cropped to square.</small>
 		</label>
 
 		<label>
@@ -188,6 +236,28 @@
 	small {
 		color: var(--text-muted);
 		font-size: 0.8rem;
+	}
+
+	.image-upload {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.image-preview {
+		width: 80px;
+		height: 80px;
+		border-radius: var(--radius-md);
+		object-fit: cover;
+		border: 1px solid var(--border);
+	}
+
+	.file-input {
+		display: none;
+	}
+
+	.upload-btn {
+		font-size: var(--text-sm);
 	}
 
 	button {

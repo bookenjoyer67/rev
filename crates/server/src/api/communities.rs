@@ -1,11 +1,12 @@
 use axum::{
-    extract::{Extension, Path, Request, State},
+    extract::{Extension, Multipart, Path, Request, State},
     http::header,
     middleware,
     routing::{delete, get, patch, post},
     Json, Router,
 };
 use serde::Serialize;
+use uuid::Uuid;
 
 use komun_core::models::{Community, CreateCommunity, Invite};
 use crate::auth::{require_auth, verify_token, AuthUser};
@@ -20,6 +21,7 @@ pub fn router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/", post(create_community))
         .route("/{slug}", patch(update_community))
+        .route("/{slug}/image", post(upload_community_image))
         .route("/{slug}/invite", post(create_invite))
         .route("/{slug}/invites", get(list_invites))
         .route("/{slug}/invites/{code}", delete(delete_invite))
@@ -248,6 +250,74 @@ impl<E: Into<anyhow::Error>> From<E> for StatusError {
             inner: err.into(),
         }
     }
+}
+
+async fn upload_community_image(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(slug): Path<String>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, StatusError> {
+    let community = crate::db::communities::get_by_slug(&state.pool, &slug).await
+        .map_err(|e| StatusError::with_status(StatusCode::NOT_FOUND, e))?;
+    let role = crate::db::communities::get_member_role(&state.pool, community.id, auth.user_id).await
+        .map_err(|_| StatusError::with_status(StatusCode::FORBIDDEN, "access denied"))?;
+    if role.as_deref() != Some("admin") {
+        return Err(StatusError::with_status(StatusCode::FORBIDDEN, "admin access required"));
+    }
+
+    let mut data: Vec<u8> = Vec::new();
+    let mut content_type: Option<String> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        if field.name() == Some("file") {
+            content_type = field.content_type().map(|s| s.to_string());
+            data = field.bytes().await.map_err(|e|
+                StatusError::with_status(StatusCode::BAD_REQUEST, format!("read error: {}", e))
+            )?.to_vec();
+            break;
+        }
+    }
+
+    if data.is_empty() {
+        return Err(StatusError::with_status(StatusCode::BAD_REQUEST, "no image file provided"));
+    }
+
+    let ct = content_type.as_deref().unwrap_or("");
+    if ct != "image/png" && ct != "image/jpeg" && ct != "image/webp" {
+        return Err(StatusError::with_status(StatusCode::BAD_REQUEST, "image must be PNG, JPEG, or WebP"));
+    }
+
+    if data.len() > state.config.media.max_community_image_bytes as usize {
+        return Err(StatusError::with_status(StatusCode::BAD_REQUEST, "image too large (max 1MB)"));
+    }
+
+    let img = image::load_from_memory(&data).map_err(|e|
+        StatusError::with_status(StatusCode::BAD_REQUEST, format!("invalid image: {}", e))
+    )?;
+    let img = img.resize(512, 512, image::imageops::FilterType::Lanczos3);
+    let mut webp: Vec<u8> = Vec::new();
+    let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut webp);
+    img.write_with_encoder(encoder).map_err(|e|
+        StatusError::with_status(StatusCode::INTERNAL_SERVER_ERROR, format!("encode error: {}", e))
+    )?;
+
+    let image_id = Uuid::now_v7();
+    let filename = format!("{}.webp", image_id);
+    let dir = std::path::Path::new(&state.config.media.community_images_dir);
+    std::fs::create_dir_all(dir).ok();
+    std::fs::write(dir.join(&filename), &webp).map_err(|e|
+        StatusError::with_status(StatusCode::INTERNAL_SERVER_ERROR, format!("write error: {}", e))
+    )?;
+
+    sqlx::query("UPDATE communities SET image_path = $1 WHERE id = $2")
+        .bind(&filename)
+        .bind(community.id)
+        .execute(&state.pool).await
+        .map_err(|e| StatusError::with_status(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let url = format!("/community-images/{}", filename);
+    Ok(Json(serde_json::json!({"image_url": url})))
 }
 
 impl StatusError {

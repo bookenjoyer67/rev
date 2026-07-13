@@ -11,6 +11,7 @@ export default defineConfig({
 			'/api': 'http://localhost:3001',
 			'/avatars': 'http://localhost:3001',
 			'/post-images': 'http://localhost:3001',
+			'/community-images': 'http://localhost:3001',
 		},
 		fs: {
 			allow: ['..']

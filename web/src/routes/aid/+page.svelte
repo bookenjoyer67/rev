@@ -16,6 +16,7 @@
 		urgency?: 'critical' | 'high' | 'medium' | 'low';
 		status: string;
 		author_id: string;
+		images?: string[];
 	}
 
 	interface Community {
@@ -171,6 +172,16 @@
 						{#if post.body}
 							<p class="body">{post.body}</p>
 						{/if}
+						{#if post.images?.length}
+							<div class="post-images">
+								{#each post.images.slice(0, 3) as img}
+									<img src={'/post-images/' + img} alt="" class="post-thumb" />
+								{/each}
+								{#if post.images.length > 3}
+									<span class="more-images">+{post.images.length - 3}</span>
+								{/if}
+							</div>
+						{/if}
 					{/if}
 					<div class="post-footer">
 						{#if post.location_name}
@@ -313,6 +324,10 @@
 	h3 { font-size: 1.05rem; margin-bottom: 0.3rem; }
 	.body { color: var(--text-muted); font-size: 0.9rem; }
 	.location { color: var(--text-muted); font-size: 0.8rem; }
+
+	.post-images { display: flex; gap: 0.4rem; margin: 0.5rem 0; align-items: center; }
+	.post-thumb { width: 72px; height: 72px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
+	.more-images { font-size: 0.75rem; color: var(--text-muted); background: var(--bg-elevated); padding: 0.2rem 0.5rem; border-radius: 4px; }
 
 	.post-footer {
 		display: flex;

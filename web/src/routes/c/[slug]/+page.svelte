@@ -6,9 +6,9 @@
 	import { getActiveServer, resolveSlug, parseSlug } from '$lib/stores/server';
 	import RespondModal from '$lib/components/RespondModal.svelte';
 
-	import { requireAuth } from '$lib/stores/auth';
+	import { requireAuth, getToken } from '$lib/stores/auth';
 
-	interface Community { slug: string; name: string; description?: string; location_name?: string; is_member: boolean; member_role?: string; }
+	interface Community { slug: string; name: string; description?: string; location_name?: string; image_path?: string; is_member: boolean; member_role?: string; }
 	interface Post {
 		id: string;
 		kind: 'resource' | 'need' | 'offer';
@@ -19,6 +19,7 @@
 		urgency?: string;
 		status: string;
 		author_id: string;
+		images?: string[];
 		created_at: string;
 	}
 
@@ -36,6 +37,9 @@
 	let editingId: string | null = $state(null);
 	let editTitle = $state('');
 	let editBody = $state('');
+	let editImageFiles: File[] = $state([]);
+	let editImagePreviews: string[] = $state([]);
+	let editExistingImages: string[] = $state([]);
 	let inviteCode = $state('');
 	let joining = $state(false);
 	let joinError = $state('');
@@ -71,6 +75,26 @@
 		editingId = post.id;
 		editTitle = post.title;
 		editBody = post.body || '';
+		editExistingImages = post.images || [];
+		editImageFiles = [];
+		editImagePreviews = [];
+	}
+
+	function handleEditImages(e: Event) {
+		const files = (e.target as HTMLInputElement).files;
+		if (!files) return;
+		for (const file of files) {
+			if (editImageFiles.length >= 5) break;
+			if (!file.type.match(/image\/(png|jpeg|webp)/)) continue;
+			editImageFiles = [...editImageFiles, file];
+			editImagePreviews = [...editImagePreviews, URL.createObjectURL(file)];
+		}
+	}
+
+	function removeEditImage(i: number) {
+		URL.revokeObjectURL(editImagePreviews[i]);
+		editImageFiles = editImageFiles.filter((_, j) => j !== i);
+		editImagePreviews = editImagePreviews.filter((_, j) => j !== i);
 	}
 
 	async function saveEdit() {
@@ -79,6 +103,19 @@
 			title: editTitle.trim(),
 			body: editBody.trim() || undefined,
 		});
+		if (editImageFiles.length > 0) {
+			const server = getActiveServer();
+			const token = getToken();
+			if (server && token) {
+				const formData = new FormData();
+				for (const file of editImageFiles) formData.append('file', file);
+				await fetch(`${server}/api/communities/${community.slug}/posts/${editingId}/images`, {
+					method: 'POST',
+					headers: { 'Authorization': `Bearer ${token}` },
+					body: formData,
+				});
+			}
+		}
 		editingId = null;
 		await loadPosts(community.slug);
 	}
@@ -149,14 +186,19 @@
 		<p class="status error">{error}</p>
 	{:else if community}
 		<header class="community-header">
-			<div>
-				<h1>{community.name}</h1>
-				{#if community.description}
-					<p class="desc">{community.description}</p>
+			<div class="community-info">
+				{#if community.image_path}
+					<img src={'/community-images/' + community.image_path} alt={community.name} class="community-image" />
 				{/if}
-				{#if community.location_name}
-					<span class="location">{community.location_name}</span>
-				{/if}
+				<div>
+					<h1>{community.name}</h1>
+					{#if community.description}
+						<p class="desc">{community.description}</p>
+					{/if}
+					{#if community.location_name}
+						<span class="location">{community.location_name}</span>
+					{/if}
+				</div>
 			</div>
 			<div class="header-actions">
 				<a href="/c/{localSlug}@{serverUrl.replace(/^https?:\/\//, '').split('/')[0].split(':')[0]}/map" class="btn-map">Map</a>
@@ -198,9 +240,8 @@
 
 		{#if posts.length === 0}
 			<div class="empty-state">
-					<p class="empty-icon">📭</p>
-					<p class="empty-title">No posts yet</p>
-					<p class="empty-body">Be the first to share what your community needs — or what you can offer.</p>
+					<p class="empty-title">Nothing here yet</p>
+					<p class="empty-body">That means there's room for you. Be the first to share what your community needs — or what you can offer.</p>
 				</div>
 		{:else}
 			<ul class="post-list">
@@ -218,6 +259,27 @@
 						<form class="edit-form" onsubmit={(e) => { e.preventDefault(); saveEdit(); }}>
 							<input type="text" bind:value={editTitle} placeholder="Title" />
 							<textarea bind:value={editBody} placeholder="Details" rows="2"></textarea>
+							{#if editExistingImages.length > 0}
+								<div class="edit-images">
+									{#each editExistingImages as img}
+										<img src={'/post-images/' + img} alt="" class="post-thumb" />
+									{/each}
+								</div>
+							{/if}
+							<div class="edit-image-previews">
+								{#each editImagePreviews as preview, i}
+									<div class="preview-item">
+										<img src={preview} alt="" />
+										<button type="button" class="remove-img" onclick={() => removeEditImage(i)}>&times;</button>
+									</div>
+								{/each}
+							</div>
+							{#if (editExistingImages.length + editImageFiles.length) < 5}
+								<input type="file" accept="image/png,image/jpeg,image/webp" multiple onchange={handleEditImages} class="edit-file-input" />
+								<button type="button" class="btn-ghost add-img-btn" onclick={() => (document.querySelector('.edit-file-input') as HTMLInputElement)?.click()}>
+									Add images
+								</button>
+							{/if}
 							<div class="edit-actions">
 								<button type="submit" class="save-btn">Save</button>
 								<button type="button" class="cancel-btn" onclick={() => editingId = null}>Cancel</button>
@@ -227,6 +289,16 @@
 						<h3>{post.title}</h3>
 						{#if post.body}
 							<p class="body">{post.body}</p>
+						{/if}
+						{#if post.images?.length}
+							<div class="post-images">
+								{#each post.images.slice(0, 3) as img}
+									<img src={'/post-images/' + img} alt="" class="post-thumb" />
+								{/each}
+								{#if post.images.length > 3}
+									<span class="more-images">+{post.images.length - 3}</span>
+								{/if}
+							</div>
 						{/if}
 					{/if}
 						<div class="post-footer">
@@ -287,402 +359,89 @@
 {/if}
 
 <style>
-	.community-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
-		margin-bottom: 1.5rem;
-		gap: 1rem;
-	}
-
+	.community-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.5rem; gap: 1rem; }
 	h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
 	.desc { color: var(--text-muted); font-size: 0.9rem; }
 	.location { color: var(--text-muted); font-size: 0.8rem; }
-
+	.community-info { display: flex; align-items: flex-start; gap: 1rem; }
+	.community-image { width: 72px; height: 72px; border-radius: var(--radius-md); object-fit: cover; border: 2px solid var(--border); flex-shrink: 0; }
 	.header-actions { display: flex; gap: 0.5rem; }
-
-	.btn-map {
-		background: var(--kind-resource-soft);
-		color: var(--kind-resource);
-		padding: 0.5rem 1rem;
-		border-radius: var(--radius);
-		font-weight: 600;
-		font-size: 0.9rem;
-		border: 1px solid var(--kind-resource);
-	}
-
+	.btn-map { background: var(--kind-resource-soft); color: var(--kind-resource); padding: 0.5rem 1rem; border-radius: var(--radius); font-weight: 600; font-size: 0.9rem; border: 1px solid var(--kind-resource); }
 	.btn-map:hover { text-decoration: none; }
-
-	.btn-settings {
-		background: var(--bg-elevated);
-		color: var(--text);
-		padding: 0.5rem 1rem;
-		border-radius: var(--radius);
-		font-weight: 600;
-		font-size: 0.9rem;
-		border: 1px solid var(--border);
-	}
-
+	.btn-settings { background: var(--bg-elevated); color: var(--text); padding: 0.5rem 1rem; border-radius: var(--radius); font-weight: 600; font-size: 0.9rem; border: 1px solid var(--border); }
 	.btn-settings:hover { text-decoration: none; border-color: var(--accent); }
+	.btn-post { background: var(--accent); color: var(--text-on-accent); padding: 0.5rem 1rem; border-radius: var(--radius); font-weight: 600; font-size: 0.9rem; white-space: nowrap; }
+	.btn-post:hover { text-decoration: none; }
 
-	.post-card {
-		background: var(--bg-surface);
-		border: 1px solid var(--border);
-		border-left: 4px solid var(--text-muted);
-		border-radius: var(--radius);
-		padding: 1rem;
-		margin-bottom: 0.75rem;
-		transition: border-color 0.2s;
-	}
+	.post-card { background: var(--bg-surface); border: 1px solid transparent; border-radius: 2px 8px 2px 8px; padding: var(--space-4); box-shadow: 2px 3px 0 rgba(0,0,0,0.15), 4px 6px 12px rgba(0,0,0,0.2); transition: transform var(--transition-base), box-shadow var(--transition-base), border-color var(--transition-fast); }
+	.post-card.kind-need:hover { border-color: var(--kind-need, var(--critical)); }
+	.post-card.kind-offer:hover { border-color: var(--kind-offer, var(--success)); }
+	.post-card.kind-resource:hover { border-color: var(--kind-resource); }
+	.post-card:hover { transform: translateY(-3px) rotate(0deg); box-shadow: 3px 5px 0 rgba(0,0,0,0.2), 6px 10px 20px rgba(0,0,0,0.3); border-color: var(--accent); }
+	.post-urgent { animation: urgent-pulse 2s ease-in-out infinite; }
+	@keyframes urgent-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } 50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15); } }
 
-	.post-card.kind-need { border-left-color: var(--critical); }
-	.post-card.kind-offer { border-left-color: var(--success); }
-	.post-card.kind-resource { border-left-color: #3b82f6; }
-
-	.post-urgent {
-		animation: urgent-pulse 2s ease-in-out infinite;
-	}
-
-	@keyframes urgent-pulse {
-		0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-		50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15); }
-	}
-
-	.author-link {
-		color: var(--text-muted);
-		font-size: 0.8rem;
-		text-decoration: none;
-	}
-	.author-link:hover { color: var(--accent); text-decoration: underline; }
-
-	.post-images {
-		display: flex;
-		gap: 0.4rem;
-		margin: 0.5rem 0;
-		align-items: center;
-	}
-
-	.post-thumb {
-		width: 80px;
-		height: 80px;
-		object-fit: cover;
-		border-radius: 6px;
-		border: 1px solid var(--border);
-	}
-
-	.more-images {
-		font-size: 0.75rem;
-		color: var(--text-muted);
-		background: var(--bg-elevated);
-		padding: 0.2rem 0.5rem;
-		border-radius: 4px;
-	}
+	.post-meta { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; font-size: 0.8rem; }
+	.kind { padding: 0.15rem 0.5rem; border-radius: var(--radius-full); font-weight: 700; text-transform: uppercase; font-size: 0.65rem; letter-spacing: 0.3px; }
+	.kind-need { background: var(--kind-need-soft); color: var(--critical); }
+	.kind-offer { background: var(--kind-offer-soft); color: var(--success); }
+	.kind-resource { background: var(--kind-resource-soft); color: var(--kind-resource); }
+	.category { color: var(--text-muted); text-transform: capitalize; }
+	.urgency { font-weight: 600; text-transform: uppercase; }
+	.time { color: var(--text-muted); margin-left: auto; }
+	h3 { font-size: 1.05rem; margin-bottom: 0.3rem; }
+	.body { color: var(--text-muted); font-size: 0.9rem; }
+	.loc { color: var(--text-muted); font-size: 0.8rem; }
+	.post-images { display: flex; gap: 0.4rem; margin: 0.5rem 0; align-items: center; }
+	.post-thumb { width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
+	.more-images { font-size: 0.75rem; color: var(--text-muted); background: var(--bg-elevated); padding: 0.2rem 0.5rem; border-radius: 4px; }
 
 	.join-banner p { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.75rem; }
-
 	.join-form { display: flex; gap: 0.5rem; }
 	.join-form input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.75rem; color: var(--text); font-size: 0.9rem; }
 	.join-btn { background: var(--accent); color: var(--text-on-accent); padding: 0.5rem 1rem; border-radius: var(--radius); font-weight: 600; font-size: 0.9rem; }
 	.join-btn:disabled { opacity: 0.6; }
 	.join-error { color: var(--critical); font-size: 0.8rem; margin-top: 0.5rem; }
 
-	.search-bar {
-		display: flex;
-		position: relative;
-		margin-bottom: 0.75rem;
-	}
-
-	.search-bar input {
-		flex: 1;
-		background: var(--bg-surface);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		padding: 0.6rem 2rem 0.6rem 0.75rem;
-		color: var(--text);
-		font-size: 0.9rem;
-	}
-
+	.search-bar { display: flex; position: relative; margin-bottom: var(--space-4); }
+	.search-bar input { flex: 1; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.6rem 2rem 0.6rem 0.75rem; color: var(--text); font-size: 0.9rem; }
 	.search-bar input:focus { outline: none; border-color: var(--accent); }
+	.clear-search { position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%); background: none; color: var(--text-muted); font-size: 1.2rem; min-height: 30px; min-width: 30px; }
 
-	.clear-search {
-		position: absolute;
-		right: 0.5rem;
-		top: 50%;
-		transform: translateY(-50%);
-		background: none;
-		color: var(--text-muted);
-		font-size: 1.2rem;
-		min-height: 30px;
-		min-width: 30px;
-	}
+	.filters { display: flex; gap: 0.5rem; margin-bottom: var(--space-5); }
+	.filters button { background: var(--bg-surface); color: var(--text-muted); padding: 0.4rem 0.8rem; border-radius: var(--radius-full); font-size: var(--text-xs); border: 1px solid var(--border); }
+	.filters button.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 
-	.btn-post {
-		background: var(--accent);
-		color: var(--text-on-accent);
-		padding: 0.5rem 1rem;
-		border-radius: var(--radius);
-		font-weight: 600;
-		font-size: 0.9rem;
-		white-space: nowrap;
-	}
+	.post-list { list-style: none; display: flex; flex-direction: column; gap: 0.75rem; }
+	.post-list :global(li:nth-child(odd) .post-card) { transform: rotate(-0.4deg); }
+	.post-list :global(li:nth-child(even) .post-card) { transform: rotate(0.3deg); }
+	.post-list :global(.post-card:hover) { transform: translateY(-3px) rotate(0deg) !important; }
 
-	.btn-post:hover { text-decoration: none; }
-
-	.filters {
-		display: flex;
-		gap: 0.5rem;
-		margin-bottom: 1.5rem;
-	}
-
-	.filters button {
-		background: var(--bg-surface);
-		color: var(--text-muted);
-		padding: 0.4rem 0.8rem;
-		border-radius: var(--radius);
-		font-size: 0.85rem;
-		border: 1px solid var(--border);
-	}
-
-	.filters button.active {
-		background: var(--accent-soft);
-		color: var(--accent);
-		border-color: var(--accent);
-	}
-
-	.post-list {
-		list-style: none;
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-	}
-
-	.post-card {
-		background: var(--bg-surface);
-		border: 1px solid var(--border);
-		border-left: 4px solid var(--text-muted);
-		border-radius: var(--radius);
-		padding: 1rem;
-		margin-bottom: 0.75rem;
-		transition: border-color 0.2s;
-	}
-
-	.post-card.kind-need { border-left-color: var(--critical); }
-	.post-card.kind-offer { border-left-color: var(--success); }
-	.post-card.kind-resource { border-left-color: #3b82f6; }
-
-	.post-urgent {
-		animation: urgent-pulse 2s ease-in-out infinite;
-	}
-
-	@keyframes urgent-pulse {
-		0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-		50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15); }
-	}
-
-	.author-link {
-		color: var(--text-muted);
-		font-size: 0.8rem;
-		text-decoration: none;
-	}
-	.author-link:hover { color: var(--accent); text-decoration: underline; }
-
-	.post-images {
-		display: flex;
-		gap: 0.4rem;
-		margin: 0.5rem 0;
-		align-items: center;
-	}
-
-	.post-thumb {
-		width: 80px;
-		height: 80px;
-		object-fit: cover;
-		border-radius: 6px;
-		border: 1px solid var(--border);
-	}
-
-	.more-images {
-		font-size: 0.75rem;
-		color: var(--text-muted);
-		background: var(--bg-elevated);
-		padding: 0.2rem 0.5rem;
-		border-radius: 4px;
-	}
-	.post-meta {
-		display: flex;
-		gap: 0.5rem;
-		align-items: center;
-		margin-bottom: 0.5rem;
-		font-size: 0.8rem;
-	}
-
-	.kind {
-		padding: 0.15rem 0.5rem;
-		border-radius: 4px;
-		font-weight: 600;
-		text-transform: uppercase;
-		font-size: 0.7rem;
-	}
-
-	.kind-need { background: var(--kind-need-soft); color: var(--critical); }
-	.kind-offer { background: var(--kind-offer-soft); color: var(--success); }
-	.kind-resource { background: var(--kind-resource-soft); color: var(--kind-resource); }
-
-	.category { color: var(--text-muted); text-transform: capitalize; }
-	.urgency { font-weight: 600; text-transform: uppercase; }
-	.time { color: var(--text-muted); margin-left: auto; }
-
-	h3 { font-size: 1.05rem; margin-bottom: 0.3rem; }
-	.body { color: var(--text-muted); font-size: 0.9rem; }
-	.loc { color: var(--text-muted); font-size: 0.8rem; }
-
-	.post-footer {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-top: 0.75rem;
-		padding-top: 0.75rem;
-		border-top: 1px solid var(--border);
-	}
-
-	.respond-btn {
-		background: var(--accent);
-		color: var(--text-on-accent);
-		padding: 0.4rem 0.8rem;
-		border-radius: var(--radius);
-		font-weight: 600;
-		font-size: 0.8rem;
-		margin-left: auto;
-	}
-
-	.author-actions {
-		display: flex;
-		gap: 0.4rem;
-		margin-left: auto;
-	}
-
-	.action-btn {
-		padding: 0.3rem 0.6rem;
-		border-radius: var(--radius);
-		font-size: 0.75rem;
-		font-weight: 600;
-		border: 1px solid;
-	}
-
+	.post-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }
+	.respond-btn { background: var(--accent); color: var(--text-on-accent); padding: 0.4rem 0.8rem; border-radius: var(--radius-full); font-weight: 600; font-size: 0.8rem; margin-left: auto; transition: transform var(--transition-fast); }
+	.respond-btn:hover { transform: translateY(-1px); }
+	.author-actions { display: flex; gap: 0.4rem; margin-left: auto; }
+	.action-btn { padding: 0.3rem 0.6rem; border-radius: var(--radius-full); font-size: 0.75rem; font-weight: 600; border: 1px solid; }
 	.action-btn.fulfill { background: var(--success-softer); color: var(--success); border-color: var(--success); }
 	.action-btn.edit { background: var(--bg-elevated); color: var(--text-muted); border-color: var(--border); }
 	.action-btn.delete { background: var(--critical-softer); color: var(--critical); border-color: var(--critical); }
+	.fulfilled-badge { font-size: 0.75rem; color: var(--success); font-weight: 600; margin-left: auto; }
 
-	.fulfilled-badge {
-		font-size: 0.75rem;
-		color: var(--success);
-		font-weight: 600;
-		margin-left: auto;
-	}
-
-	.edit-form {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		margin-bottom: 0.5rem;
-	}
-
-	.post-card {
-		background: var(--bg-surface);
-		border: 1px solid var(--border);
-		border-left: 4px solid var(--text-muted);
-		border-radius: var(--radius);
-		padding: 1rem;
-		margin-bottom: 0.75rem;
-		transition: border-color 0.2s;
-	}
-
-	.post-card.kind-need { border-left-color: var(--critical); }
-	.post-card.kind-offer { border-left-color: var(--success); }
-	.post-card.kind-resource { border-left-color: #3b82f6; }
-
-	.post-urgent {
-		animation: urgent-pulse 2s ease-in-out infinite;
-	}
-
-	@keyframes urgent-pulse {
-		0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-		50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15); }
-	}
-
-	.author-link {
-		color: var(--text-muted);
-		font-size: 0.8rem;
-		text-decoration: none;
-	}
-	.author-link:hover { color: var(--accent); text-decoration: underline; }
-
-	.post-images {
-		display: flex;
-		gap: 0.4rem;
-		margin: 0.5rem 0;
-		align-items: center;
-	}
-
-	.post-thumb {
-		width: 80px;
-		height: 80px;
-		object-fit: cover;
-		border-radius: 6px;
-		border: 1px solid var(--border);
-	}
-
-	.more-images {
-		font-size: 0.75rem;
-		color: var(--text-muted);
-		background: var(--bg-elevated);
-		padding: 0.2rem 0.5rem;
-		border-radius: 4px;
-	}
-
-	.edit-form input, .edit-form textarea {
-		background: var(--bg);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		padding: 0.5rem;
-		color: var(--text);
-		font-size: 0.9rem;
-		font-family: inherit;
-	}
-
+	.edit-form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem; }
+	.edit-form input, .edit-form textarea { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem; color: var(--text); font-size: 0.9rem; font-family: inherit; }
+	.edit-images, .edit-image-previews { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+	.preview-item { position: relative; width: 64px; height: 64px; }
+	.preview-item img { width: 100%; height: 100%; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); }
+	.remove-img { position: absolute; top: -6px; right: -6px; background: var(--critical); color: var(--text-on-critical); border-radius: 50%; width: 20px; height: 20px; font-size: 12px; line-height: 1; display: flex; align-items: center; justify-content: center; padding: 0; min-height: unset; min-width: unset; }
+	.edit-file-input { display: none; }
+	.add-img-btn { font-size: var(--text-xs); }
 	.edit-actions { display: flex; gap: 0.4rem; }
 	.save-btn { background: var(--accent); color: var(--text-on-accent); padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; font-weight: 600; }
 	.cancel-btn { background: var(--bg-elevated); color: var(--text-muted); padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; border: 1px solid var(--border); }
 
-	.members-toggle {
-		background: var(--bg-surface);
-		color: var(--text-muted);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		padding: 0.5rem 1rem;
-		font-size: 0.85rem;
-		width: 100%;
-		margin-top: 1.5rem;
-	}
-
-	.member-list {
-		list-style: none;
-		margin-top: 0.75rem;
-		background: var(--bg-surface);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		overflow: hidden;
-	}
-
-	.member-list li {
-		padding: 0.6rem 1rem;
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		border-bottom: 1px solid var(--border);
-		font-size: 0.9rem;
-	}
-
+	.members-toggle { background: var(--bg-surface); color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 1rem; font-size: 0.85rem; width: 100%; margin-top: 1.5rem; }
+	.member-list { list-style: none; margin-top: 0.75rem; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+	.member-list li { padding: 0.6rem 1rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
 	.member-list li:last-child { border-bottom: none; }
 	.member-role { font-size: 0.7rem; color: var(--warning); text-transform: uppercase; font-weight: 600; }
 

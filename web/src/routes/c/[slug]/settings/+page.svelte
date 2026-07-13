@@ -3,7 +3,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { isConnected, getActiveServer, resolveSlug } from '$lib/stores/server';
-	import { isAuthenticated } from '$lib/stores/auth';
+	import { isAuthenticated, getToken } from '$lib/stores/auth';
 	import { api } from '$lib/api/client';
 
 	interface Invite { code: string; uses_remaining?: number; expires_at?: string; created_at: string; }
@@ -26,6 +26,10 @@
 	let error = $state('');
 	let slug = $state('');
 	let localSlug = $state('');
+	let imagePath: string | null = $state(null);
+	let imageFile: File | null = $state(null);
+	let imagePreview: string | null = $state(null);
+	let uploadingImage = $state(false);
 
 	async function geocodeCoords(query: string): Promise<{ lat: number; lon: number; display_name: string } | null> {
 		const serverUrl = getActiveServer();
@@ -98,6 +102,8 @@
 				resolvedName = community.location_name || null;
 			}
 			invites = await api.communities.listInvites(localSlug);
+			imagePath = community.image_path ? '/community-images/' + community.image_path : null;
+			if (imagePath) imagePreview = imagePath;
 		} catch { goto(`/c/${slug}`); }
 		loading = false;
 	});
@@ -136,6 +142,40 @@
 
 	function copyCode(code: string) {
 		navigator.clipboard.writeText(code);
+	}
+
+	function handleImage(e: Event) {
+		const file = (e.target as HTMLInputElement).files?.[0];
+		if (!file) return;
+		if (!file.type.match(/image\/(png|jpeg|webp)/)) {
+			error = 'Image must be PNG, JPEG, or WebP';
+			return;
+		}
+		imageFile = file;
+		imagePreview = URL.createObjectURL(file);
+	}
+
+	async function uploadImage() {
+		if (!imageFile) return;
+		uploadingImage = true;
+		const server = getActiveServer();
+		const token = getToken();
+		if (!server || !token) { uploadingImage = false; return; }
+		const formData = new FormData();
+		formData.append('file', imageFile);
+		try {
+			const res = await fetch(`${server}/api/communities/${localSlug}/image`, {
+				method: 'POST',
+				headers: { 'Authorization': `Bearer ${token}` },
+				body: formData,
+			});
+			if (res.ok) {
+				const data = await res.json();
+				imagePath = data.image_url;
+				imageFile = null;
+			}
+		} catch {}
+		uploadingImage = false;
 	}
 </script>
 
@@ -184,6 +224,28 @@
 					<option value="federated">Federated</option>
 					<option value="private">Private</option>
 				</select>
+			</label>
+
+			<label>
+				<span>Community Image</span>
+				<div class="image-upload">
+					{#if imagePreview}
+						<img src={imagePreview} alt="Preview" class="image-preview" />
+					{/if}
+					{#if imagePath}
+						<p class="hint">Current image set. Upload a new one to replace it.</p>
+					{/if}
+					<input type="file" accept="image/png,image/jpeg,image/webp" onchange={handleImage} class="file-input" />
+					<button type="button" class="btn-ghost upload-btn" onclick={() => (document.querySelector('.file-input') as HTMLInputElement)?.click()}>
+						{imagePreview ? 'Change' : 'Choose image'}
+					</button>
+					{#if imageFile}
+						<button type="button" class="btn-primary upload-btn" onclick={uploadImage} disabled={uploadingImage}>
+							{uploadingImage ? 'Uploading...' : 'Upload'}
+						</button>
+					{/if}
+				</div>
+				<small>PNG, JPEG, or WebP. Max 1MB.</small>
 			</label>
 			{#if error}<p class="error">{error}</p>{/if}
 			<button type="submit" class="save-btn" disabled={saving}>
@@ -246,6 +308,29 @@
 
 	.error { color: var(--critical); font-size: 0.85rem; }
 	.status { text-align: center; color: var(--text-muted); padding: 3rem 0; }
+
+	.image-upload {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	.image-preview {
+		width: 80px;
+		height: 80px;
+		border-radius: var(--radius-md);
+		object-fit: cover;
+		border: 1px solid var(--border);
+	}
+
+	.file-input {
+		display: none;
+	}
+
+	.upload-btn {
+		font-size: var(--text-sm);
+	}
 
 	.location-preview {
 		display: flex;

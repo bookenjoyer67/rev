@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { requireAuth } from '$lib/stores/auth';
+	import { requireAuth, getToken } from '$lib/stores/auth';
 	import { api } from '$lib/api/client';
-	import { encodePiggpinLink } from '$lib/piggpin-encode';
 	import { getActiveServer } from '$lib/stores/server';
 	import { onMount } from 'svelte';
 
@@ -24,6 +23,8 @@
 	let loading = $state(false);
 	let showPicker = $state(false);
 	let mapIframeSrc: string | null = $state(null);
+	let imageFiles: File[] = $state([]);
+	let imagePreviews: string[] = $state([]);
 
 	const expiryDefaults: Record<string, string> = { need: '7', offer: '14', resource: '0' };
 
@@ -110,6 +111,41 @@
 		}
 	}
 
+	function handleImages(e: Event) {
+		const files = (e.target as HTMLInputElement).files;
+		if (!files) return;
+		const newFiles: File[] = [];
+		const newPreviews: string[] = [];
+		for (const file of files) {
+			if (imageFiles.length + newFiles.length >= 5) break;
+			if (!file.type.match(/image\/(png|jpeg|webp)/)) continue;
+			newFiles.push(file);
+			newPreviews.push(URL.createObjectURL(file));
+		}
+		imageFiles = [...imageFiles, ...newFiles];
+		imagePreviews = [...imagePreviews, ...newPreviews];
+	}
+
+	function removeImage(i: number) {
+		URL.revokeObjectURL(imagePreviews[i]);
+		imageFiles = imageFiles.filter((_, j) => j !== i);
+		imagePreviews = imagePreviews.filter((_, j) => j !== i);
+	}
+
+	async function uploadImages(slug: string, postId: string) {
+		if (imageFiles.length === 0) return;
+		const server = getActiveServer();
+		const token = getToken();
+		if (!server || !token) return;
+		const formData = new FormData();
+		for (const file of imageFiles) formData.append('file', file);
+		await fetch(`${server}/api/communities/${slug}/posts/${postId}/images`, {
+			method: 'POST',
+			headers: { 'Authorization': `Bearer ${token}` },
+			body: formData,
+		});
+	}
+
 	function submit() {
 		requireAuth(async () => {
 			if (!selectedCommunity) { error = 'Select a community'; return; }
@@ -117,7 +153,7 @@
 			loading = true;
 			error = '';
 			try {
-				await api.posts.create(selectedCommunity, {
+				const post = await api.posts.create(selectedCommunity, {
 					kind,
 					category,
 					title: title.trim(),
@@ -130,6 +166,7 @@
 					contact_method: contactMethod.trim() || null,
 				});
 				sendPinDetails();
+				await uploadImages(selectedCommunity, post.id);
 				const iframe = document.querySelector('iframe');
 				if (iframe?.contentWindow) {
 					try { iframe.contentWindow.postMessage({ type: 'komun:submit' }, 'https://app.piggpin.space'); } catch (_) {}
@@ -190,6 +227,25 @@
 		<label>
 			<span>Details (optional)</span>
 			<textarea bind:value={body} oninput={sendPinDetails} placeholder="More info..." rows="3"></textarea>
+		</label>
+
+		<label>
+			<span>Images (optional, max 5)</span>
+			<div class="image-previews">
+				{#each imagePreviews as preview, i}
+					<div class="preview-item">
+						<img src={preview} alt="" />
+						<button type="button" class="remove-img" onclick={() => removeImage(i)}>&times;</button>
+					</div>
+				{/each}
+			</div>
+			{#if imageFiles.length < 5}
+				<input type="file" accept="image/png,image/jpeg,image/webp" multiple onchange={handleImages} class="file-input" />
+				<button type="button" class="btn-ghost img-btn" onclick={() => (document.querySelector('.file-input') as HTMLInputElement)?.click()}>
+					{imageFiles.length > 0 ? 'Add more' : 'Add images'}
+				</button>
+			{/if}
+			<small>PNG, JPEG, or WebP. Max 5MB each.</small>
 		</label>
 
 		{#if kind === 'need'}
@@ -383,5 +439,52 @@
 	.error {
 		color: var(--critical);
 		font-size: 0.85rem;
+	}
+
+	.image-previews {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
+	.preview-item {
+		position: relative;
+		width: 72px;
+		height: 72px;
+	}
+
+	.preview-item img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		border-radius: var(--radius-md);
+		border: 1px solid var(--border);
+	}
+
+	.remove-img {
+		position: absolute;
+		top: -6px;
+		right: -6px;
+		background: var(--critical);
+		color: var(--text-on-critical);
+		border-radius: 50%;
+		width: 20px;
+		height: 20px;
+		font-size: 12px;
+		line-height: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		min-height: unset;
+		min-width: unset;
+	}
+
+	.file-input {
+		display: none;
+	}
+
+	.img-btn {
+		font-size: var(--text-sm);
 	}
 </style>

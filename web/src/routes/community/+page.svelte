@@ -9,6 +9,7 @@
 		name: string;
 		description?: string;
 		location_name?: string;
+		image_path?: string;
 	}
 
 	let communities: Community[] = $state([]);
@@ -47,6 +48,9 @@
 			{#each communities as c}
 				<li>
 					<a href="/c/{c.slug}">
+						{#if c.image_path}
+							<img src={'/community-images/' + c.image_path} alt="" class="community-thumb" />
+						{/if}
 						<div>
 							<strong>{c.name}</strong>
 							{#if c.description}
@@ -99,8 +103,8 @@
 
 	li a {
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
+		gap: 0.75rem;
 		padding: 1rem;
 		color: var(--text);
 	}
@@ -119,6 +123,16 @@
 	.location {
 		color: var(--text-muted);
 		font-size: 0.8rem;
+		margin-left: auto;
+	}
+
+	.community-thumb {
+		width: 48px;
+		height: 48px;
+		border-radius: var(--radius-md);
+		object-fit: cover;
+		border: 1px solid var(--border);
+		flex-shrink: 0;
 	}
 
 	.empty {

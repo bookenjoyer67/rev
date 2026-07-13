@@ -25,6 +25,8 @@ pub struct Community {
     pub map_community_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub map_secret_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

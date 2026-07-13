@@ -18,7 +18,6 @@
 	})());
 
 	const kindLabels: Record<string, string> = { resource: 'Resource', need: 'Need', offer: 'Offer' };
-	const urgencyColors: Record<string, string> = { critical: 'var(--critical)', high: 'var(--warning)', medium: 'var(--text-muted)', low: 'var(--text-muted)' };
 
 	function timeAgo(dateStr: string): string {
 		const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
@@ -30,11 +29,10 @@
 </script>
 
 <article class="aid-card">
-	<div class="meta">
+	<div class="card-top">
 		<span class="kind kind-{post.kind}">{kindLabels[post.kind]}</span>
-		<span class="category">{post.category}</span>
 		{#if post.urgency}
-			<span class="urgency" style="color: {urgencyColors[post.urgency]}">{post.urgency}</span>
+			<span class="urgency" data-level={post.urgency}>{post.urgency}</span>
 		{/if}
 		<span class="time">{timeAgo(post.created_at)}</span>
 	</div>
@@ -45,23 +43,23 @@
 		<p class="body">{post.body}</p>
 	{/if}
 
-	<div class="footer">
-		<div class="origin">
-			<span class="community">{post.community_name}</span>
-			<span class="server">
-				{post.server_name}
-				{#if post.server_location}
-					<span class="server-loc"> &middot; {post.server_location}</span>
-				{/if}
-			</span>
-		</div>
-
-		{#if post.author_id !== myUserId}
-			{#if post.kind === 'need'}
-				<button class="respond-btn" onclick={() => showModal = true}>I can help</button>
-			{:else if post.kind === 'offer'}
-				<button class="respond-btn" onclick={() => showModal = true}>Request this</button>
+	{#if post.images?.length}
+		<div class="post-images">
+			{#each post.images.slice(0, 3) as img}
+				<img src={'/post-images/' + img} alt="" class="post-thumb" />
+			{/each}
+			{#if post.images.length > 3}
+				<span class="more-images">+{post.images.length - 3}</span>
 			{/if}
+		</div>
+	{/if}
+
+	<div class="footer">
+		<span class="community">{post.community_name}</span>
+		{#if post.author_id !== myUserId}
+			<button class="btn-primary respond-btn" onclick={() => showModal = true}>
+				{#if post.kind === 'need'}I can help{:else if post.kind === 'offer'}Request this{:else}Respond{/if}
+			</button>
 		{:else}
 			<span class="your-post">Your post</span>
 		{/if}
@@ -78,76 +76,104 @@
 <style>
 	.aid-card {
 		background: var(--bg-surface);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		padding: 1rem;
+		border: 1px solid transparent;
+		border-radius: 2px 8px 2px 8px;
+		padding: var(--space-4);
+		box-shadow: 2px 3px 0 rgba(0,0,0,0.15), 4px 6px 12px rgba(0,0,0,0.2);
+		transition: transform var(--transition-base), box-shadow var(--transition-base), border-color var(--transition-fast);
 	}
 
-	.meta {
+	.aid-card:hover {
+		transform: translateY(-3px) rotate(0deg);
+		box-shadow: 3px 5px 0 rgba(0,0,0,0.2), 6px 10px 20px rgba(0,0,0,0.3);
+		border-color: var(--accent);
+	}
+
+	.card-top {
 		display: flex;
 		gap: 0.5rem;
 		align-items: center;
 		margin-bottom: 0.5rem;
-		font-size: 0.8rem;
+		font-size: var(--text-xs);
 	}
 
 	.kind {
 		padding: 0.15rem 0.5rem;
-		border-radius: 4px;
-		font-weight: 600;
+		border-radius: var(--radius-full);
+		font-weight: 700;
 		text-transform: uppercase;
-		font-size: 0.7rem;
+		font-size: 0.65rem;
+		letter-spacing: 0.3px;
 	}
 
-	.kind-need { background: var(--kind-need-soft); color: var(--critical); }
-	.kind-offer { background: var(--kind-offer-soft); color: var(--success); }
+	.kind-need { background: var(--kind-need-soft); color: var(--kind-need, var(--critical)); }
+	.kind-offer { background: var(--kind-offer-soft); color: var(--kind-offer, var(--success)); }
 	.kind-resource { background: var(--kind-resource-soft); color: var(--kind-resource); }
 
-	.category { color: var(--text-muted); text-transform: capitalize; }
-	.urgency { font-weight: 600; text-transform: uppercase; }
-	.time { color: var(--text-muted); margin-left: auto; }
+	.urgency {
+		font-weight: 700;
+		text-transform: uppercase;
+		font-size: 0.65rem;
+	}
 
-	h3 { font-size: 1.05rem; margin-bottom: 0.3rem; }
+	.urgency[data-level="critical"] { color: var(--critical); }
+	.urgency[data-level="high"] { color: var(--warning); }
+	.urgency[data-level="medium"],
+	.urgency[data-level="low"] { color: var(--text-muted); }
 
-	.body { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.75rem; }
+	.time {
+		color: var(--text-muted);
+		margin-left: auto;
+	}
+
+	h3 {
+		font-size: var(--text-lg);
+		margin-bottom: 0.3rem;
+		font-weight: 700;
+	}
+
+	.body {
+		color: var(--text-muted);
+		font-size: var(--text-sm);
+		margin-bottom: var(--space-3);
+		line-height: 1.5;
+	}
 
 	.footer {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		margin-top: 0.75rem;
-		padding-top: 0.75rem;
+		margin-top: var(--space-3);
+		padding-top: var(--space-3);
 		border-top: 1px solid var(--border);
 	}
 
-	.origin {
-		display: flex;
-		flex-direction: column;
-		gap: 0.1rem;
+	.community {
+		font-size: var(--text-sm);
+		color: var(--text);
+		font-weight: 600;
 	}
-
-	.community { font-size: 0.8rem; color: var(--text); font-weight: 500; }
-	.server { font-size: 0.7rem; color: var(--text-muted); }
 
 	.respond-btn {
-		background: var(--accent);
-		color: var(--text-on-accent);
-		padding: 0.4rem 0.8rem;
-		border-radius: var(--radius);
-		font-weight: 600;
-		font-size: 0.8rem;
+		font-size: var(--text-xs);
+		padding: var(--space-1) var(--space-3);
 	}
-
-	.respond-btn:hover { opacity: 0.9; }
 
 	.your-post {
 		color: var(--text-muted);
-		font-size: 0.75rem;
+		font-size: var(--text-xs);
 		font-style: italic;
 	}
 
+	.post-images { display: flex; gap: 0.4rem; margin: 0.5rem 0; align-items: center; }
+	.post-thumb { width: 72px; height: 72px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
+	.more-images { font-size: 0.75rem; color: var(--text-muted); background: var(--bg-elevated); padding: 0.2rem 0.5rem; border-radius: 4px; }
+
 	@media (max-width: 480px) {
-		.footer { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
-		.respond-btn { align-self: flex-start; }
+		.footer {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.5rem;
+		}
 	}
 </style>

@@ -5,7 +5,6 @@
 	import { isConnected, getActiveServer, resolveSlug } from '$lib/stores/server';
 	import { auth } from '$lib/stores/auth';
 	import { api } from '$lib/api/client';
-	import { encodePiggpinLink } from '$lib/piggpin-encode';
 
 	let slug = $state('');
 	let localSlug = $state('');

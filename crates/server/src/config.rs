@@ -140,6 +140,8 @@ pub struct MediaConfig {
     pub post_images_dir: String,
     pub max_post_image_bytes: u64,
     pub max_post_images: u32,
+    pub community_images_dir: String,
+    pub max_community_image_bytes: u64,
 }
 
 impl Default for MediaConfig {
@@ -150,6 +152,8 @@ impl Default for MediaConfig {
             post_images_dir: "data/post-images".into(),
             max_post_image_bytes: 5_242_880,
             max_post_images: 5,
+            community_images_dir: "data/community-images".into(),
+            max_community_image_bytes: 1_048_576,
         }
     }
 }

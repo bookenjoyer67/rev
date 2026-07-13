@@ -121,10 +121,14 @@ async fn main() -> anyhow::Result<()> {
     let post_img_dir = std::path::absolute(&state.config.media.post_images_dir)
         .unwrap_or_else(|_| std::path::PathBuf::from(&state.config.media.post_images_dir));
     std::fs::create_dir_all(&post_img_dir).ok();
+    let community_img_dir = std::path::absolute(&state.config.media.community_images_dir)
+        .unwrap_or_else(|_| std::path::PathBuf::from(&state.config.media.community_images_dir));
+    std::fs::create_dir_all(&community_img_dir).ok();
     let app = Router::new()
         .nest("/api", api::router(state.clone()))
         .nest_service("/avatars", ServeDir::new(&avatar_dir))
         .nest_service("/post-images", ServeDir::new(&post_img_dir))
+        .nest_service("/community-images", ServeDir::new(&community_img_dir))
         .layer(cors)
         .layer(middleware::from_fn(security_headers::security_headers))
         .layer(TraceLayer::new_for_http());

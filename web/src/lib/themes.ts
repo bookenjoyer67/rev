@@ -15,6 +15,22 @@ function soft(hex: string, alpha: number): string {
 	return hex + a;
 }
 
+function lighten(hex: string, pct: number): string {
+	const num = parseInt(hex.slice(1), 16);
+	const r = Math.min(255, (num >> 16) + Math.round(255 * pct / 100));
+	const g = Math.min(255, ((num >> 8) & 0xff) + Math.round(255 * pct / 100));
+	const b = Math.min(255, (num & 0xff) + Math.round(255 * pct / 100));
+	return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+}
+
+function darken(hex: string, pct: number): string {
+	const num = parseInt(hex.slice(1), 16);
+	const r = Math.max(0, (num >> 16) - Math.round(255 * pct / 100));
+	const g = Math.max(0, ((num >> 8) & 0xff) - Math.round(255 * pct / 100));
+	const b = Math.max(0, (num & 0xff) - Math.round(255 * pct / 100));
+	return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+}
+
 function bestContrast(hex: string): string {
 	const r = parseInt(hex.slice(1, 3), 16) / 255;
 	const g = parseInt(hex.slice(3, 5), 16) / 255;
@@ -28,21 +44,21 @@ export const themes: Theme[] = [
 	{
 		name: 'Komun Dark',
 		label: 'Komun Dark',
-		meta: { bgColor: '#0f0f1a', themeColor: '#1a1a2e' },
+		meta: { bgColor: '#0d0d12', themeColor: '#18181f' },
 		colors: {
-			bg: '#0f0f1a',
-			'bg-surface': '#1a1a2e',
-			'bg-elevated': '#25253e',
-			text: '#e8e8f0',
-			'text-muted': '#8888aa',
-			accent: '#e63946',
-			'kind-need': '#e63946',
-			success: '#2ec4b6',
-			'kind-offer': '#2ec4b6',
-			warning: '#f4a261',
+			bg: '#0d0d12',
+			'bg-surface': '#18181f',
+			'bg-elevated': '#22222b',
+			text: '#e4e4ec',
+			'text-muted': '#6b6b7b',
+			accent: '#ff6b35',
+			'kind-need': '#ff6b35',
+			success: '#2ec4a0',
+			'kind-offer': '#2ec4a0',
+			warning: '#e8a838',
 			critical: '#e63946',
-			border: '#2a2a4a',
-			'kind-resource': '#818cf8',
+			border: '#2a2a35',
+			'kind-resource': '#7b9cff',
 		},
 	},
 	{
@@ -1228,72 +1244,74 @@ export const themes: Theme[] = [
 ];
 
 const THEME_FONTS: Record<string, string> = {
-	'Komun Dark': "'Inter', sans-serif",
-	'Komun Light': "'Inter', sans-serif",
-	Forest: "'DM Sans', sans-serif",
-	Ocean: "'DM Sans', sans-serif",
-	Solar: "'Fraunces', serif",
-	Twilight: "'Source Serif 4', serif",
-	Ember: "'Fraunces', serif",
-	Mint: "'Space Grotesk', sans-serif",
-	Rose: "'Source Serif 4', serif",
-	Slate: "'Inter', sans-serif",
+	'Komun Dark': "'Atkinson Hyperlegible', sans-serif",
+	'Komun Light': "'Atkinson Hyperlegible', sans-serif",
+	Forest: "'Atkinson Hyperlegible', sans-serif",
+	Ocean: "'Atkinson Hyperlegible', sans-serif",
+	Solar: "'Atkinson Hyperlegible', sans-serif",
+	Twilight: "'Atkinson Hyperlegible', sans-serif",
+	Ember: "'Atkinson Hyperlegible', sans-serif",
+	Mint: "'Atkinson Hyperlegible', sans-serif",
+	Rose: "'Atkinson Hyperlegible', sans-serif",
+	Slate: "'Atkinson Hyperlegible', sans-serif",
 	Sunset: "'Atkinson Hyperlegible', sans-serif",
-	Nord: "'JetBrains Mono', monospace",
-	Dracula: "'Space Grotesk', sans-serif",
-	Mocha: "'Space Grotesk', sans-serif",
-	Latte: "'Space Grotesk', sans-serif",
-	Silver: "'Inter', sans-serif",
-	Lavender: "'Source Serif 4', serif",
-	Peach: "'Fraunces', serif",
-	Sky: "'DM Sans', sans-serif",
-	Neon: "'Space Grotesk', sans-serif",
-	Mono: "'Inter', sans-serif",
-	Obsidian: "'Inter', sans-serif",
-	'One Dark': "'Space Grotesk', sans-serif",
-	Rust: "'Fraunces', serif",
-	Crimson: "'Playfair Display', serif",
-	Midnight: "'JetBrains Mono', monospace",
-	Storm: "'JetBrains Mono', monospace",
-	Noir: "'JetBrains Mono', monospace",
-	Cobalt: "'Space Grotesk', sans-serif",
-	Garnet: "'Playfair Display', serif",
+	Nord: "'Atkinson Hyperlegible', sans-serif",
+	Dracula: "'Atkinson Hyperlegible', sans-serif",
+	Mocha: "'Atkinson Hyperlegible', sans-serif",
+	Latte: "'Atkinson Hyperlegible', sans-serif",
+	Silver: "'Atkinson Hyperlegible', sans-serif",
+	Lavender: "'Atkinson Hyperlegible', sans-serif",
+	Peach: "'Atkinson Hyperlegible', sans-serif",
+	Sky: "'Atkinson Hyperlegible', sans-serif",
+	Neon: "'Atkinson Hyperlegible', sans-serif",
+	Mono: "'Atkinson Hyperlegible', sans-serif",
+	Obsidian: "'Atkinson Hyperlegible', sans-serif",
+	'One Dark': "'Atkinson Hyperlegible', sans-serif",
+	Rust: "'Atkinson Hyperlegible', sans-serif",
+	Crimson: "'Atkinson Hyperlegible', sans-serif",
+	Midnight: "'Atkinson Hyperlegible', sans-serif",
+	Storm: "'Atkinson Hyperlegible', sans-serif",
+	Noir: "'Atkinson Hyperlegible', sans-serif",
+	Cobalt: "'Atkinson Hyperlegible', sans-serif",
+	Garnet: "'Atkinson Hyperlegible', sans-serif",
 	Lava: "'Atkinson Hyperlegible', sans-serif",
 	Ash: "'Atkinson Hyperlegible', sans-serif",
-	Terra: "'Fraunces', serif",
-	Indigo: "'JetBrains Mono', monospace",
-	Moss: "'DM Sans', sans-serif",
-	Abyss: "'DM Sans', sans-serif",
-	Tundra: "'Inter', sans-serif",
-	Sakura: "'Source Serif 4', serif",
-	Cream: "'Fraunces', serif",
-	Mist: "'DM Sans', sans-serif",
-	Honey: "'Fraunces', serif",
-	Wisteria: "'Source Serif 4', serif",
-	Bone: "'Fraunces', serif",
-	Frost: "'Inter', sans-serif",
-	Meadow: "'DM Sans', sans-serif",
-	Coral: "'Source Serif 4', serif",
-	Chalk: "'Inter', sans-serif",
-	Void: "'JetBrains Mono', monospace",
-	Copper: "'Fraunces', serif",
-	Jade: "'DM Sans', sans-serif",
-	Violet: "'Source Serif 4', serif",
-	Umber: "'Fraunces', serif",
-	Steel: "'Inter', sans-serif",
+	Terra: "'Atkinson Hyperlegible', sans-serif",
+	Indigo: "'Atkinson Hyperlegible', sans-serif",
+	Moss: "'Atkinson Hyperlegible', sans-serif",
+	Abyss: "'Atkinson Hyperlegible', sans-serif",
+	Tundra: "'Atkinson Hyperlegible', sans-serif",
+	Sakura: "'Atkinson Hyperlegible', sans-serif",
+	Cream: "'Atkinson Hyperlegible', sans-serif",
+	Mist: "'Atkinson Hyperlegible', sans-serif",
+	Honey: "'Atkinson Hyperlegible', sans-serif",
+	Wisteria: "'Atkinson Hyperlegible', sans-serif",
+	Bone: "'Atkinson Hyperlegible', sans-serif",
+	Frost: "'Atkinson Hyperlegible', sans-serif",
+	Meadow: "'Atkinson Hyperlegible', sans-serif",
+	Coral: "'Atkinson Hyperlegible', sans-serif",
+	Chalk: "'Atkinson Hyperlegible', sans-serif",
+	Void: "'Atkinson Hyperlegible', sans-serif",
+	Copper: "'Atkinson Hyperlegible', sans-serif",
+	Jade: "'Atkinson Hyperlegible', sans-serif",
+	Violet: "'Atkinson Hyperlegible', sans-serif",
+	Umber: "'Atkinson Hyperlegible', sans-serif",
+	Steel: "'Atkinson Hyperlegible', sans-serif",
 	Charcoal: "'Atkinson Hyperlegible', sans-serif",
-	Linen: "'Fraunces', serif",
-	Dew: "'DM Sans', sans-serif",
-	Blush: "'Source Serif 4', serif",
-	Cloud: "'Inter', sans-serif",
+	Linen: "'Atkinson Hyperlegible', sans-serif",
+	Dew: "'Atkinson Hyperlegible', sans-serif",
+	Blush: "'Atkinson Hyperlegible', sans-serif",
+	Cloud: "'Atkinson Hyperlegible', sans-serif",
 	Butter: "'Atkinson Hyperlegible', sans-serif",
-	Lagoon: "'Space Grotesk', sans-serif",
+	Lagoon: "'Atkinson Hyperlegible', sans-serif",
 };
 
 export const THEME_STORAGE_KEY = 'komun_theme';
 
 export function buildThemeColors(theme: Theme): Record<string, string> {
 	const c = theme.colors;
+	const isLight = bestContrast(c.bg) === '#000000';
+	const adjust = isLight ? darken : lighten;
 	return {
 		...c,
 		font: THEME_FONTS[theme.name] || "'Inter', sans-serif",
@@ -1315,6 +1333,14 @@ export function buildThemeColors(theme: Theme): Record<string, string> {
 		'text-on-need': bestContrast(c['kind-need'] || c.accent),
 		'text-on-offer': bestContrast(c['kind-offer'] || c.success),
 		'text-on-resource': bestContrast(c['kind-resource'] || '#818cf8'),
+		// Semantic interactives
+		'button-primary-bg': c.accent,
+		'button-primary-hover': adjust(c.accent, 8),
+		'button-primary-active': adjust(c.accent, 14),
+		'button-primary-text': bestContrast(c.accent),
+		'button-ghost-hover': soft(c.accent, 0.08),
+		'button-ghost-active': soft(c.accent, 0.14),
+		'input-focus-ring': soft(c.accent, 0.25),
 		radius: '8px',
 		'radius-lg': '12px',
 	};
