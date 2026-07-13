@@ -166,7 +166,7 @@
 
 		<p class="footer-note">
 			Don't have a server? Ask your community organizer, or
-			<a href="https://github.com/komun" target="_blank">run your own</a>.
+			<a href="https://git.komun.buzz/Book-Enjoyer/rev" target="_blank">run your own</a>.
 		</p>
 	</div>
 </div>
