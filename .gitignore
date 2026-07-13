@@ -10,3 +10,4 @@ config.toml
 *.swo
 dist/
 data/relay/
+.hermes/
