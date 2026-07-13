@@ -20,6 +20,8 @@
 		status: string;
 		author_id: string;
 		images?: string[];
+		location_lat?: number;
+		location_lon?: number;
 		created_at: string;
 	}
 
@@ -34,6 +36,7 @@
 	let loading = $state(true);
 	let error = $state('');
 	let respondingTo: Post | null = $state(null);
+	let showMapPost: Post | null = $state(null);
 	let editingId: string | null = $state(null);
 	let editTitle = $state('');
 	let editBody = $state('');
@@ -305,6 +308,10 @@
 							{#if post.location_name}
 								<span class="loc">{post.location_name}</span>
 							{/if}
+							{#if post.location_lat != null && post.location_lon != null}
+								<button class="map-btn" onclick={() => showMapPost = post} title="View on map">📍</button>
+							{/if}
+							<div class="footer-actions">
 							{#if post.author_id !== myUserId}
 								{#if post.kind === 'need'}
 									<button class="respond-btn" onclick={() => respondingTo = post}>I can help</button>
@@ -320,6 +327,7 @@
 									<button class="action-btn delete" onclick={() => deletePost(post.id)}>Delete</button>
 								</div>
 							{/if}
+							</div>
 						</div>
 					</li>
 				{/each}
@@ -356,6 +364,18 @@
 		post={{ id: respondingTo.id, title: respondingTo.title, kind: respondingTo.kind, server_url: getActiveServer() || '', community_slug: community.slug, author_id: respondingTo.author_id }}
 		onClose={() => respondingTo = null}
 	/>
+{/if}
+
+{#if showMapPost}
+	<div class="map-overlay" role="dialog" onclick={() => showMapPost = null}>
+		<div class="map-popout" onclick={(e) => e.stopPropagation()}>
+			<button class="map-close" onclick={() => showMapPost = null}>&times;</button>
+			<iframe
+				title="Post location"
+				src={`https://www.openstreetmap.org/export/embed.html?bbox=${showMapPost.location_lon! - 0.01},${showMapPost.location_lat! - 0.005},${showMapPost.location_lon! + 0.01},${showMapPost.location_lat! + 0.005}&layer=mapnik&marker=${showMapPost.location_lat},${showMapPost.location_lon}`}
+			></iframe>
+		</div>
+	</div>
 {/if}
 
 <style>
@@ -417,7 +437,14 @@
 	.post-list :global(li:nth-child(even) .post-card) { transform: rotate(0.3deg); }
 	.post-list :global(.post-card:hover) { transform: translateY(-3px) rotate(0deg) !important; }
 
-	.post-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }
+	.post-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border); flex-wrap: wrap; gap: 0.4rem; }
+	.footer-actions { display: flex; align-items: center; gap: 0.4rem; margin-left: auto; }
+	.map-btn { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.25rem 0.5rem; font-size: 0.9rem; min-height: unset; min-width: unset; cursor: pointer; transition: border-color var(--transition-fast); }
+	.map-btn:hover { border-color: var(--accent); }
+	.map-overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
+	.map-popout { position: relative; width: 100%; max-width: 500px; aspect-ratio: 1; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+	.map-popout iframe { width: 100%; height: 100%; border: none; }
+	.map-close { position: absolute; top: 0.5rem; right: 0.5rem; z-index: 1; background: var(--bg-surface); color: var(--text); border: 1px solid var(--border); border-radius: 50%; width: 28px; height: 28px; font-size: 1rem; display: flex; align-items: center; justify-content: center; padding: 0; min-height: unset; min-width: unset; }
 	.respond-btn { background: var(--accent); color: var(--text-on-accent); padding: 0.4rem 0.8rem; border-radius: var(--radius-full); font-weight: 600; font-size: 0.8rem; margin-left: auto; transition: transform var(--transition-fast); }
 	.respond-btn:hover { transform: translateY(-1px); }
 	.author-actions { display: flex; gap: 0.4rem; margin-left: auto; }

@@ -32,6 +32,7 @@
 <article class="aid-card">
 	<div class="card-top">
 		<span class="kind kind-{post.kind}">{kindLabels[post.kind]}</span>
+		<span class="category">{post.category}</span>
 		{#if post.urgency}
 			<span class="urgency" data-level={post.urgency}>{post.urgency}</span>
 		{/if}
@@ -42,6 +43,10 @@
 
 	{#if post.body}
 		<p class="body">{post.body}</p>
+	{/if}
+
+	{#if post.location_name}
+		<p class="location">📍 {post.location_name}</p>
 	{/if}
 
 	{#if post.images?.length}
@@ -130,6 +135,8 @@
 	.kind-offer { background: var(--kind-offer-soft); color: var(--kind-offer, var(--success)); }
 	.kind-resource { background: var(--kind-resource-soft); color: var(--kind-resource); }
 
+	.category { color: var(--text-muted); text-transform: capitalize; font-size: 0.7rem; }
+
 	.urgency {
 		font-weight: 700;
 		text-transform: uppercase;
@@ -157,6 +164,12 @@
 		font-size: var(--text-sm);
 		margin-bottom: var(--space-3);
 		line-height: 1.5;
+	}
+
+	.location {
+		color: var(--text-muted);
+		font-size: var(--text-xs);
+		margin-bottom: var(--space-2);
 	}
 
 	.footer {
