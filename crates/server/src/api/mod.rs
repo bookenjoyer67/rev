@@ -9,6 +9,7 @@ mod health;
 mod node;
 mod notifications;
 mod geocode;
+mod link_preview;
 mod search;
 pub mod directory;
 mod users;
@@ -33,6 +34,8 @@ pub fn router(state: AppState) -> Router {
         .nest("/users", users::router(state.clone()).merge(endorsements::router(state.clone())))
         .nest("/communities", communities::router(state.clone()))
         .nest("/communities/{slug}/posts", posts::router(state.clone()));
+
+    r = r.route("/link-preview", axum::routing::get(link_preview::link_preview));
 
     if state.config.discovery.directory_enabled {
         r = r.merge(directory::router(state));

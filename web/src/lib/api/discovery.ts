@@ -46,6 +46,7 @@ export interface AggregatedPost {
 	status: string;
 	author_id: string;
 	images?: string[];
+	contact_method?: string;
 	created_at: string;
 	server_url: string;
 	server_name: string;

@@ -5,6 +5,7 @@
 	import { auth } from '$lib/stores/auth';
 	import { getActiveServer, resolveSlug, parseSlug } from '$lib/stores/server';
 	import RespondModal from '$lib/components/RespondModal.svelte';
+	import AidCard from '$lib/components/AidCard.svelte';
 
 	import { requireAuth, getToken } from '$lib/stores/auth';
 
@@ -17,11 +18,12 @@
 		body?: string;
 		location_name?: string;
 		urgency?: string;
-		status: string;
+		status?: string;
 		author_id: string;
 		images?: string[];
 		location_lat?: number;
 		location_lon?: number;
+		contact_method?: string;
 		created_at: string;
 	}
 
@@ -249,86 +251,25 @@
 		{:else}
 			<ul class="post-list">
 				{#each posts as post}
-					<li class="post-card kind-{post.kind}" class:post-urgent={post.urgency === 'urgent' || post.urgency === 'critical'}>
-						<div class="post-meta">
-							<span class="kind kind-{post.kind}">{kindLabels[post.kind]}</span>
-							<span class="category">{post.category}</span>
-							{#if post.urgency}
-								<span class="urgency" style="color: {urgencyColors[post.urgency]}">{post.urgency}</span>
-							{/if}
-							<span class="time">{timeAgo(post.created_at)}</span>
-						</div>
-						{#if editingId === post.id}
-						<form class="edit-form" onsubmit={(e) => { e.preventDefault(); saveEdit(); }}>
-							<input type="text" bind:value={editTitle} placeholder="Title" />
-							<textarea bind:value={editBody} placeholder="Details" rows="2"></textarea>
-							{#if editExistingImages.length > 0}
-								<div class="edit-images">
-									{#each editExistingImages as img}
-										<img src={'/post-images/' + img} alt="" class="post-thumb" />
-									{/each}
-								</div>
-							{/if}
-							<div class="edit-image-previews">
-								{#each editImagePreviews as preview, i}
-									<div class="preview-item">
-										<img src={preview} alt="" />
-										<button type="button" class="remove-img" onclick={() => removeEditImage(i)}>&times;</button>
-									</div>
-								{/each}
-							</div>
-							{#if (editExistingImages.length + editImageFiles.length) < 5}
-								<input type="file" accept="image/png,image/jpeg,image/webp" multiple onchange={handleEditImages} class="edit-file-input" />
-								<button type="button" class="btn-ghost add-img-btn" onclick={() => (document.querySelector('.edit-file-input') as HTMLInputElement)?.click()}>
-									Add images
-								</button>
-							{/if}
-							<div class="edit-actions">
-								<button type="submit" class="save-btn">Save</button>
-								<button type="button" class="cancel-btn" onclick={() => editingId = null}>Cancel</button>
-							</div>
-						</form>
-					{:else}
-						<h3>{post.title}</h3>
-						{#if post.body}
-							<p class="body">{post.body}</p>
-						{/if}
-						{#if post.images?.length}
-							<div class="post-images">
-								{#each post.images.slice(0, 3) as img}
-									<img src={'/post-images/' + img} alt="" class="post-thumb" />
-								{/each}
-								{#if post.images.length > 3}
-									<span class="more-images">+{post.images.length - 3}</span>
-								{/if}
-							</div>
-						{/if}
-					{/if}
-						<div class="post-footer">
-							{#if post.location_name}
-								<span class="loc">{post.location_name}</span>
-							{/if}
-							{#if post.location_lat != null && post.location_lon != null}
-								<button class="map-btn" onclick={() => showMapPost = post} title="View on map">📍</button>
-							{/if}
-							<div class="footer-actions">
-							{#if post.author_id !== myUserId}
-								{#if post.kind === 'need'}
-									<button class="respond-btn" onclick={() => respondingTo = post}>I can help</button>
-								{:else if post.kind === 'offer'}
-									<button class="respond-btn" onclick={() => respondingTo = post}>Request this</button>
-								{/if}
-							{:else if post.status === 'fulfilled'}
-								<span class="fulfilled-badge">Fulfilled</span>
-							{:else}
-								<div class="author-actions">
-									<button class="action-btn fulfill" onclick={() => fulfillPost(post.id)}>Fulfill</button>
-									<button class="action-btn edit" onclick={() => startEdit(post)}>Edit</button>
-									<button class="action-btn delete" onclick={() => deletePost(post.id)}>Delete</button>
-								</div>
-							{/if}
-							</div>
-						</div>
+					<li>
+						<AidCard
+							{post}
+							onFulfill={(id) => fulfillPost(id)}
+							onEdit={(p) => startEdit(p)}
+							onDelete={(id) => deletePost(id)}
+							editing={editingId === post.id}
+							editTitle={editingId === post.id ? editTitle : ''}
+							editBody={editingId === post.id ? editBody : ''}
+							onEditTitleChange={(v) => editTitle = v}
+							onEditBodyChange={(v) => editBody = v}
+							onSaveEdit={() => saveEdit()}
+							onCancelEdit={() => editingId = null}
+							editExistingImages={editExistingImages}
+							editImageFiles={editImageFiles}
+							editImagePreviews={editImagePreviews}
+							onEditImages={handleEditImages}
+							onRemoveEditImage={(i) => removeEditImage(i)}
+						/>
 					</li>
 				{/each}
 			</ul>
@@ -411,6 +352,7 @@
 	.time { color: var(--text-muted); margin-left: auto; }
 	h3 { font-size: 1.05rem; margin-bottom: 0.3rem; }
 	.body { color: var(--text-muted); font-size: 0.9rem; }
+	.contact { color: var(--text-muted); font-size: 0.8rem; }
 	.loc { color: var(--text-muted); font-size: 0.8rem; }
 	.post-images { display: flex; gap: 0.4rem; margin: 0.5rem 0; align-items: center; }
 	.post-thumb { width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
@@ -433,38 +375,9 @@
 	.filters button.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 
 	.post-list { list-style: none; display: flex; flex-direction: column; gap: 0.75rem; }
-	.post-list :global(li:nth-child(odd) .post-card) { transform: rotate(-0.4deg); }
-	.post-list :global(li:nth-child(even) .post-card) { transform: rotate(0.3deg); }
-	.post-list :global(.post-card:hover) { transform: translateY(-3px) rotate(0deg) !important; }
-
-	.post-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border); flex-wrap: wrap; gap: 0.4rem; }
-	.footer-actions { display: flex; align-items: center; gap: 0.4rem; margin-left: auto; }
-	.map-btn { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.25rem 0.5rem; font-size: 0.9rem; min-height: unset; min-width: unset; cursor: pointer; transition: border-color var(--transition-fast); }
-	.map-btn:hover { border-color: var(--accent); }
-	.map-overlay { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
-	.map-popout { position: relative; width: 100%; max-width: 500px; aspect-ratio: 1; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
-	.map-popout iframe { width: 100%; height: 100%; border: none; }
-	.map-close { position: absolute; top: 0.5rem; right: 0.5rem; z-index: 1; background: var(--bg-surface); color: var(--text); border: 1px solid var(--border); border-radius: 50%; width: 28px; height: 28px; font-size: 1rem; display: flex; align-items: center; justify-content: center; padding: 0; min-height: unset; min-width: unset; }
-	.respond-btn { background: var(--accent); color: var(--text-on-accent); padding: 0.4rem 0.8rem; border-radius: var(--radius-full); font-weight: 600; font-size: 0.8rem; margin-left: auto; transition: transform var(--transition-fast); }
-	.respond-btn:hover { transform: translateY(-1px); }
-	.author-actions { display: flex; gap: 0.4rem; margin-left: auto; }
-	.action-btn { padding: 0.3rem 0.6rem; border-radius: var(--radius-full); font-size: 0.75rem; font-weight: 600; border: 1px solid; }
-	.action-btn.fulfill { background: var(--success-softer); color: var(--success); border-color: var(--success); }
-	.action-btn.edit { background: var(--bg-elevated); color: var(--text-muted); border-color: var(--border); }
-	.action-btn.delete { background: var(--critical-softer); color: var(--critical); border-color: var(--critical); }
-	.fulfilled-badge { font-size: 0.75rem; color: var(--success); font-weight: 600; margin-left: auto; }
-
-	.edit-form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem; }
-	.edit-form input, .edit-form textarea { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem; color: var(--text); font-size: 0.9rem; font-family: inherit; }
-	.edit-images, .edit-image-previews { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-	.preview-item { position: relative; width: 64px; height: 64px; }
-	.preview-item img { width: 100%; height: 100%; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); }
-	.remove-img { position: absolute; top: -6px; right: -6px; background: var(--critical); color: var(--text-on-critical); border-radius: 50%; width: 20px; height: 20px; font-size: 12px; line-height: 1; display: flex; align-items: center; justify-content: center; padding: 0; min-height: unset; min-width: unset; }
-	.edit-file-input { display: none; }
-	.add-img-btn { font-size: var(--text-xs); }
-	.edit-actions { display: flex; gap: 0.4rem; }
-	.save-btn { background: var(--accent); color: var(--text-on-accent); padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; font-weight: 600; }
-	.cancel-btn { background: var(--bg-elevated); color: var(--text-muted); padding: 0.3rem 0.8rem; border-radius: var(--radius); font-size: 0.8rem; border: 1px solid var(--border); }
+	.post-list :global(li:nth-child(odd) .aid-card) { transform: rotate(-0.4deg); }
+	.post-list :global(li:nth-child(even) .aid-card) { transform: rotate(0.3deg); }
+	.post-list :global(.aid-card:hover) { transform: translateY(-3px) rotate(0deg) !important; }
 
 	.members-toggle { background: var(--bg-surface); color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 1rem; font-size: 0.85rem; width: 100%; margin-top: 1.5rem; }
 	.member-list { list-style: none; margin-top: 0.75rem; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
