@@ -154,6 +154,7 @@
 				{#if post.location_lat != null && post.location_lon != null}
 					<button class="map-btn" onclick={() => showMap = true} title="View on map">📍</button>
 				{/if}
+				<button class="map-btn" onclick={() => { navigator.clipboard.writeText(`${location.origin}/c/${post.community_slug || ''}/p/${post.id}`); }} title="Copy link">🔗</button>
 				{#if post.author_id === myUserId && (onFulfill || onEdit || onDelete)}
 					{#if post.status === 'fulfilled'}
 						<span class="fulfilled-badge">Fulfilled</span>
