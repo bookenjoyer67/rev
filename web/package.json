@@ -29,6 +29,7 @@
     "esbuild@0.25.12": true
   },
   "dependencies": {
-    "komun-wasm": "file:../crates/wasm/pkg"
+    "komun-wasm": "file:../crates/wasm/pkg",
+    "leaflet": "^1.9.4"
   }
 }

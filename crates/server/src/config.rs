@@ -9,12 +9,12 @@ pub struct Config {
     pub node: NodeConfig,
     pub discovery: DiscoveryConfig,
     pub auth: AuthConfig,
-    pub federation: FederationConfig,
     pub security: SecurityConfig,
     pub posts: PostsConfig,
     pub admin: AdminConfig,
     pub media: MediaConfig,
     pub relay: RelayConfig,
+    pub geocode: GeocodeConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -37,6 +37,44 @@ impl Default for RelayConfig {
             storage_path: "data/relay".into(),
             max_clients_per_room: 100,
             external_url: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct GeocodeConfig {
+    /// Contact address (email or URL) identifying the operator of this
+    /// deployment, sent to Nominatim in the `User-Agent` header.
+    ///
+    /// Nominatim's usage policy requires the request to identify the
+    /// application *and* give a contact a maintainer actually reads, so set
+    /// this to a real address. Requests may be blocked when it is missing.
+    pub contact: Option<String>,
+}
+
+impl GeocodeConfig {
+    /// The outbound `User-Agent`: identifies this deployment and carries the
+    /// configured contact. Falls back to the historical generic agent when no
+    /// contact is configured, so an unconfigured node keeps working.
+    pub fn user_agent(&self) -> String {
+        match self
+            .contact
+            .as_deref()
+            .map(str::trim)
+            .filter(|contact| !contact.is_empty())
+        {
+            Some(contact) => format!(
+                "Komun/{} (+{}; nominatim proxy)",
+                env!("CARGO_PKG_VERSION"),
+                contact
+            ),
+            None => concat!(
+                "Komun/",
+                env!("CARGO_PKG_VERSION"),
+                " (nominatim proxy; mutual-aid app)"
+            )
+            .to_string(),
         }
     }
 }
@@ -81,14 +119,6 @@ pub struct AuthConfig {
     pub jwt_secret: String,
     pub token_lifetime_days: u32,
     pub max_registrations_per_hour: u32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct FederationConfig {
-    pub enabled: bool,
-    pub domain: Option<String>,
-    pub max_alliances: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -166,12 +196,12 @@ impl Default for Config {
             node: NodeConfig::default(),
             discovery: DiscoveryConfig::default(),
             auth: AuthConfig::default(),
-            federation: FederationConfig::default(),
             security: SecurityConfig::default(),
             posts: PostsConfig::default(),
             admin: AdminConfig::default(),
             media: MediaConfig::default(),
             relay: RelayConfig::default(),
+            geocode: GeocodeConfig::default(),
         }
     }
 }
@@ -228,16 +258,6 @@ impl Default for AuthConfig {
     }
 }
 
-impl Default for FederationConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            domain: None,
-            max_alliances: 50,
-        }
-    }
-}
-
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
@@ -262,6 +282,11 @@ impl Config {
         };
 
         config.apply_env_overrides();
+
+        tracing::debug!(
+            geocode_user_agent = %config.geocode.user_agent(),
+            "resolved outbound geocode identity"
+        );
 
         if std::env::var("JWT_SECRET").is_err() {
             tracing::warn!(

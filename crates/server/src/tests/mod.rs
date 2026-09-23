@@ -209,9 +209,6 @@ directory_enabled = false
 jwt_secret = "this-is-at-least-32-characters-long-for-testing"
 token_lifetime_days = 7
 
-[federation]
-enabled = false
-
 [security]
 allowed_origins = "*"
 

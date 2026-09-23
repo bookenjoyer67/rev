@@ -1,168 +1,129 @@
 # Development guide
 
+How to build, run and test Komun, in the order that actually works. The conventions the
+code must follow are in `docs/CONVENTIONS.md`; the frozen design is `.dispatch/SPEC.md`.
+
 ## Prerequisites
 
-- **Rust** 1.82+ (edition 2024)
-- **Node.js** 22+
-- **wasm-pack** — `cargo install wasm-pack`
-- **PostgreSQL** 16 (or Docker for the DB container)
-- **Docker** + docker-compose (optional, for full containerized workflow)
+| Tool | Version used here | Notes |
+|---|---|---|
+| Rust | 1.95.0 (`rustc`/`cargo`) | workspace is a single Cargo workspace: `komun-core`, `komun-server`, `komun-wasm`, `komun-relay` (relay is removed by A1.4) |
+| `wasm-pack` | present | builds `crates/wasm` to `crates/wasm/pkg/` (browser target) |
+| Node.js | 22.x (v22.23.2) | |
+| npm | 10.x (10.9.8) | |
+| PostgreSQL | 16 | the server runs migrations itself at startup |
+| `psql` | 16 client | for creating a fresh database / probes |
 
-## First-time setup
+`config.toml` is **gitignored** and therefore absent from a fresh checkout. The server
+loads it from `config.toml` in the working directory (or `KOMUN_CONFIG=/path/to/other`).
+Copy the template and edit it:
 
 ```bash
-# 1. Clone and enter
-git clone <repo-url> komun
-cd komun
-
-# 2. Create config
 cp config.example.toml config.toml
-# Edit config.toml — at minimum set a proper jwt_secret
-
-# 3. Start PostgreSQL (choose one)
-docker compose up db -d          # containerized
-# OR use your local PostgreSQL
-
-# 4. Build WASM crypto library
-wasm-pack build crates/wasm --target web
-
-# 5. Build frontend
-cd web
-npm install
-npm run build
-cd ..
-
-# 6. Build and run server
-cargo build --release --bin komun-server
-cargo run --release --bin komun-server
+# minimum: point [database] url at your Postgres
 ```
 
-The server starts on `http://localhost:3000` (or whatever `bind_address`/`port` you configured). It auto-runs SQLx migrations on startup.
+The example config is maintained by the docs/deploy card (B4); it must boot as shipped.
+
+## Schema: a fresh database is one file
+
+`migrations/001_schema.sql` **is** the schema (SPEC §1.4). To create a database from
+scratch, apply that one file once:
+
+```bash
+psql "$DATABASE_URL" -f migrations/001_schema.sql
+```
+
+You can also just start the server against an empty database — SQLx applies the migration
+at startup. After the squash, schema changes are new numbered migrations
+(`migrations/002_*.sql`, …); never edit an applied migration (see `docs/CONVENTIONS.md` §2).
 
 ## Build order (critical)
 
+The wasm package must exist before the frontend is installed:
+
 ```
-wasm-pack build crates/wasm --target web    # 1. WASM crypto library
-  ↓ produces crates/wasm/pkg/
-cd web && npm install && npm run build     # 2. SvelteKit static export
-  ↓ produces web/build/
-cargo build --bin komun-server              # 3. Rust backend
+1. wasm-pack build crates/wasm --target web      # produces crates/wasm/pkg/
+2. cd web && npm install && npm run build        # requires crates/wasm/pkg/ FIRST
+3. cargo build --release --bin komun-server      # backend, serves web/build/
 ```
 
-The server expects `web/build/` to exist at runtime (configured via `static_dir` in config.toml). If you're running API-only (no frontend), remove `static_dir` from config.
+**The trap:** `web/package.json` depends on `"komun-wasm": "file:../crates/wasm/pkg"`.
+`npm install` resolves that local path, so if `crates/wasm/pkg/` does not exist yet the
+install fails. Build the wasm package **before** installing, every time `crates/wasm`
+changes, rebuild both the package and the frontend.
 
-## Development workflows
+If you changed nothing in `crates/wasm`, you do not need step 1 or step 2 to work on the
+backend.
 
-### Backend only (API changes)
+## Commands
+
+Run from the repository root unless noted. The agent containers need cargo on `PATH`:
 
 ```bash
-# Run with auto-reload (cargo watch)
-cargo watch -x 'run --bin komun-server'
-
-# Check compilation
-cargo check
-
-# Run REPL commands (stats, list-users, etc.)
-cargo run --bin komun-server
-# Type 'help' at the komun> prompt
+export PATH=/usr/local/cargo/bin:$PATH
 ```
 
-### Frontend only (UI changes)
+### Backend
 
 ```bash
+cargo build --workspace                 # compile every crate
+cargo test --workspace                  # unit + integration tests
+cargo clippy --release -- -D warnings   # the zero-warning standard
+cargo run --bin komun-server            # start the API server on [server].port (default 3000)
+```
+
+`cargo run --bin komun-server` needs a reachable Postgres (`[database] url`) and serves
+the API under `/api`. When stdin is a terminal it also starts the REPL (`help`).
+
+### WASM + frontend
+
+```bash
+wasm-pack build crates/wasm --target web     # emits crates/wasm/pkg/
 cd web
-npm run dev        # Vite dev server with HMR
-# Opens on http://localhost:5173
-# Requires the backend running separately for API calls
+npm install                                  # needs crates/wasm/pkg/ to exist (see trap above)
+npm run check                                # svelte-kit sync + svelte-check
+npm run build                                # adapter-static -> web/build/
+npx vitest run                               # component/unit tests
 ```
 
-The Vite config allows `komun.buzz` and `localhost` as hosts and permits filesystem access to `..` (for the WASM package).
+## Measure a lint/tool gate honestly
 
-### WASM crypto changes
+This has bitten the project more than once, so it is a rule, not advice:
 
-```bash
-wasm-pack build crates/wasm --target web
-cd web && npm run build && cd ..
-cargo run --bin komun-server
-```
+- **`cargo clippy` caches.** A second run with no source change prints nothing at all —
+  that is a cache hit, not a clean lint. `touch` a source file (e.g.
+  `touch crates/server/src/main.rs`) before measuring.
+- **`cargo build` never shows clippy lints.** "No new warnings" must come from
+  `cargo clippy -p komun-server --no-deps`, not from the build.
+- **`svelte-check` reports a frozen inherited baseline** (currently 14 errors / 37
+  warnings in 8 files, all in the old community UI that A6 deletes) until the frontend
+  flatten lands. A web change is judged by whether it *increases* those counts, not by
+  reaching zero. See `.dispatch/FRONTEND-BASELINE.md`; the backend lint baseline is in
+  `.dispatch/BACKEND-LINT-BASELINE.md`.
+- **Compare counts, not just exit codes.** `npm run check` and `npx vitest run` exit
+  non-zero on the frozen baseline.
 
-If you're using Vite dev server, you may only need the `wasm-pack build` step — Vite picks up the `pkg/` changes.
+## Not verifiable in a sandbox
 
-### Config changes
+The agent containers have **no internet**, so several things can only be checked on a
+machine with egress. Do not claim them from inside a sandbox:
 
-- Edit `config.toml` for runtime changes (restart server)
-- If adding new config fields, update both:
-  - `config.rs` (struct definition + defaults + env overrides)
-  - `config.example.toml` (documented template)
+- **Map tiles.** Leaflet fetches raster tiles over the network; with no egress the map
+  initialises and renders its attribution but no tile loads. Verify tile loading on a
+  networked host.
+- **Live SMTP.** Email (verification links, password reset) needs a real `[email]`/SMTP
+  server; delivery cannot be exercised offline.
+- **`wasm-pack build` on first use.** Building the wasm package needs the
+  `wasm32-unknown-unknown` target and `wasm-bindgen`, which must be downloaded on first
+  use. In these containers that target is absent and cannot be fetched, so
+  `crates/wasm/pkg/` is normally **pre-built by whoever has network access** and the
+  frontend is installed on top of it.
+- **`npm install`** likewise cannot run offline; `web/node_modules/` is pre-warmed.
 
-### Database changes
+## Environments
 
-- Add new migration files in `migrations/` with sequential numbering (`003_*.sql`, `004_*.sql`, etc.)
-- Never edit existing migrations — they are immutable once applied
-- If you add new SQLx queries, run `cargo sqlx prepare` to update the offline query cache for Docker builds
-
-## Docker workflow
-
-```bash
-# Build and run everything
-docker compose up --build
-
-# Rebuild just the app (after code changes)
-docker compose up --build app
-
-# Tear down
-docker compose down
-
-# Tear down including volumes (resets DB)
-docker compose down -v
-```
-
-The Dockerfile has three stages:
-1. **builder**: Compiles `komun-server` in release mode with `SQLX_OFFLINE=true`
-2. **frontend**: `npm ci` + `npm run build` for SvelteKit static export
-3. **runtime**: Slim Debian with the binary + `web/build/` + `migrations/`
-
-## Lint and type check
-
-```bash
-# Rust
-cargo check                      # type check all crates
-cargo clippy                     # lint (if installed)
-
-# Frontend (SvelteKit + TypeScript)
-cd web
-npm run check                    # svelte-kit sync + svelte-check
-```
-
-There are no ESLint, Prettier, or Biome configs. No Tailwind.
-
-## Database connection
-
-Default dev connection string (in `.env` and `config.toml`):
-
-```
-postgres://komun:komun@localhost:5432/komun
-```
-
-Docker Compose creates this PostgreSQL user/database automatically. The DB container uses `POSTGRES_USER=komun`, `POSTGRES_PASSWORD=komun`, `POSTGRES_DB=komun`.
-
-## Environment variables
-
-| Variable | Purpose | Set in |
-|---|---|---|
-| `DATABASE_URL` | PostgreSQL connection string | `.env` or docker-compose |
-| `BIND_ADDR` | Server listen address (backwards-compat: `host:port`) | `.env` or docker-compose |
-| `JWT_SECRET` | JWT signing secret | `.env` |
-| `KOMUN_CONFIG` | Path to config file (default: `config.toml`) | optional |
-| `KOMUN_BIND_ADDRESS` | Override `[server].bind_address` | optional |
-| `KOMUN_PORT` | Override `[server].port` | optional |
-| `KOMUN_NODE_NAME` | Override `[node].name` | optional |
-
-## Production deployment notes
-
-- Change `jwt_secret` to a random base64 string (e.g., `openssl rand -base64 32`)
-- Set `registration_mode` to `"approval"` to prevent open registration
-- Set `allowed_origins` to your specific domain (not `"*"`)
-- Configure TLS termination at a reverse proxy (nginx, Caddy) — the Axum server listens on plain HTTP
-- Set `[discovery].listed = true` and point `directory_url` to your public URL to appear in the server directory
-- The relay WebSocket URL (`external_url`) needs a `wss://` URL if behind a TLS proxy
+The server reads `config.toml` by default and honours the same env overrides as before,
+including `DATABASE_URL`, `KOMUN_CONFIG`, `KOMUN_BIND_ADDRESS`, `KOMUN_PORT` and
+`KOMUN_NODE_NAME` (see `crates/server/src/config.rs`). `[auth] jwt_secret` is gone with
+the JWT layer (SPEC A10).
