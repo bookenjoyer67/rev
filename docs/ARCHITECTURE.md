@@ -1,189 +1,130 @@
 # Architecture
 
+## What Komun is
+
+A single-server mutual-aid web app. The server **is** the community: there is no
+multi-tenant `communities` table, no federation, and no relay. Users sign up with email and
+password, post needs/offers/resources (and, in Phase B, marketplace listings), and negotiate
+over end-to-end encrypted match threads. The only outbound integration is an optional public
+directory listing and the OSM/Nominatim map.
+
 ## System overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ Browser (SPA)                                           │
-│ ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐ │
-│ │ SvelteKit UI │──│ ServiceWorker│──│ komun-wasm (WASM)│ │
-│ │ (web/src/)   │  │ (cache/offln)│  │ (client crypto)  │ │
-│ └──────┬───────┘  └──────────────┘  └──────────────────┘ │
-└────────┼────────────────────────────────────────────────┘
-         │ HTTPS
-         ▼
-┌─────────────────────────────────────────────────────────┐
-│ Axum Server (crates/server/)                             │
-│ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐│
-│ │ API      │ │ Auth     │ │ REPL     │ │ Relay Bridge ││
-│ │ handlers │ │ (JWT)    │ │ (stdin)  │ │ (spawn_relay)││
-│ └────┬─────┘ └──────────┘ └──────────┘ └──────┬───────┘│
-│      │                                        │         │
-│ ┌────▼─────┐                                   │         │
-│ │ DB layer │                                   │         │
-│ │ (sqlx)   │                                   │         │
-│ └────┬─────┘                                   │         │
-└──────┼─────────────────────────────────────────┼─────────┘
-       │                                         │
-       ▼                                         ▼
-┌──────────────┐                    ┌─────────────────────┐
-│ PostgreSQL   │                    │ piggPin Relay       │
-│ (komun DB)   │                    │ (crates/relay/)     │
-│              │                    │ WebSocket :9001     │
-│ - users      │                    │                     │
-│ - communities│                    │ Optional bridges:   │
-│ - posts      │                    │  - MQTT (Meshtastic)│
-│ - matches    │                    │  - RNode (serial)   │
-│ - messages   │                    │  - Reticulum        │
-│ - directory  │                    │  - Peer relay       │
-│ - invites    │                    └─────────────────────┘
-│ - alliances  │
-│ - members    │
-│ - notifications│
-└──────────────┘
+┌──────────────────────────────────────────────────────────┐
+│ Browser (SvelteKit 5 SPA, ssr=false)                     │
+│  web/src/  ── UI, routes, stores                         │
+│  komun-wasm ── x25519 ECDH + XChaCha20Poly1305 + Argon2  │
+└───────────────┬──────────────────────────────────────────┘
+                │ HTTPS (JSON; ciphertext for messages)
+                ▼
+┌──────────────────────────────────────────────────────────┐
+│ Axum server (crates/server, :3000)                       │
+│  api/   REST handlers (flat /api/posts, /api/auth, …)    │
+│  auth/  signup, signin, sessions, password, email        │
+│  db/    sqlx runtime queries                             │
+│  tasks/ expiry, health, directory registration           │
+│  repl.rs, security_headers.rs, rate_limit.rs, sessions.rs│
+└───────────────┬──────────────────────────────────────────┘
+                │
+                ▼
+        ┌───────────────┐        ┌────────────────────────┐
+        │ PostgreSQL 16 │        │ optional: public       │
+        │ (one node)    │        │ directory + OSM tiles  │
+        └───────────────┘        └────────────────────────┘
 ```
 
-## Crate dependency graph
+## Crates
 
-```
-komun-core (shared models)
-    ↑
-    ├── komun-server (axum, sqlx, jwt)
-    │       ↓
-    │   komun-relay (websocket map relay) [optional]
-    │
-    └── (no direct dep from wasm)
+| Crate | Role |
+|---|---|
+| `crates/core` | Shared models and the `db_enum!` macro (plain data + serde; no DB or HTTP) |
+| `crates/server` | Axum HTTP API, auth/sessions, sqlx queries, background tasks, REPL |
+| `crates/wasm` | Client-side crypto compiled to WASM (x25519, XChaCha20Poly1305, Argon2, recovery codes) |
 
-komun-wasm (standalone, no dep on other crates)
-    ↓ built into npm package
-web/ (SvelteKit, imports komun-wasm via file:../crates/wasm/pkg)
-```
+`komun-relay` and the `federation/` module were deleted in the reshape; the federation
+config section and the alliances API are gone.
 
 ## Server module tree (`crates/server/src/`)
 
 ```
-main.rs              Entry point, AppState, router assembly, bootstrap
-config.rs            TOML config deserialization, env overrides
-repl.rs              Interactive admin CLI (stats, user mgmt, community mgmt)
-relay_bridge.rs      Spawns piggPin relay as embedded service
-relay_ops.rs         Crypto ops for relay community creation (ECIES, DEK wrapping)
+main.rs              bootstrap: config, pool, migrations, router, tasks, REPL
+config.rs            TOML config, env overrides, startup validation
+sessions.rs          opaque session tokens (random raw, SHA-256 stored)
+rate_limit.rs        per-IP token buckets for auth routes
+security_headers.rs  response security headers
+repl.rs              interactive admin CLI when stdin is a terminal
 
 api/
-  mod.rs             Router composition (merge/nest all sub-routers)
-  health.rs          GET /api/health
-  node.rs            GET /api/node (server metadata)
-  admin.rs           Superadmin-only: stats, user CRUD, community CRUD, directory
-  communities.rs     Community CRUD, membership, alliances
-  posts.rs           Post CRUD (needs/offers/resources), filtering, responding
-  conversations.rs   Match threads, messaging
-  notifications.rs   Notification CRUD, unread counts
-  directory.rs       Server directory listing/registration
+  mod.rs             router composition
+  health.rs          GET  /api/health
+  node.rs            GET  /api/node         (server identity + discovery flags)
+  posts.rs           GET/POST /api/posts, GET/PATCH/DELETE /api/posts/{id}, image upload
+  conversations.rs   responses, /api/me/conversations, messages, status
+  search.rs          GET  /api/search, /api/search/users
+  users.rs           GET  /api/users/{id}
+  endorsements.rs    GET/POST/DELETE /api/users/{id}/endorse(ments)
+  notifications.rs   /api/me/notifications*
+  admin.rs           /api/admin/* (superadmin/admin)
+  reports.rs         report/hide a post; /api/admin/reports*
+  directory.rs       optional /api/directory* (mounted only when enabled)
+  geocode.rs         hardened Nominatim proxy (rate-limited, cached)
+  link_preview.rs    GET  /api/link-preview
+  error.rs           shared StatusError -> JSON error mapping
+  geocode/           mod.rs + limiter.rs + cache.rs
 
 auth/
-  mod.rs             JWT create/verify, register, recover, me, user keys, middleware
+  mod.rs             routes + middleware (require_auth/require_admin/require_superadmin)
+  password.rs        Argon2id verifier hashing + policy
+  email.rs           SMTP (lettre) for verify / reset mail
 
-db/
-  mod.rs             Module re-exports
-  communities.rs     Community queries
-  conversations.rs   Match and message queries
-  notifications.rs   Notification queries
-  posts.rs           Post queries
-
-federation/          Federation primitives (WIP)
-
-tasks/
-  mod.rs             Background task spawner
-  bundle_cleanup.rs  Cleanup orphaned key bundles
-  expiry.rs          Expire old posts
-  health.rs          Periodic health checks
-  registration.rs    Registration rate limit tracking
+db/                  conversations, endorsements, notifications, posts, reports, sessions, users
+tasks/               expiry, health, directory registration, bundle cleanup
 ```
 
 ## Frontend route tree (`web/src/routes/`)
 
 ```
-+page.svelte             Home — location-based feed with server discovery
-+layout.svelte           Persistent shell: nav, hamburger, notifications, onboarding
-
-connect/+page.svelte     Server URL input, known servers, identity recovery
-account/+page.svelte     Display name, key display, passphrase, logout
-aid/+page.svelte         Community-scoped post listing
-aid/new/+page.svelte     Create new post (need/offer/resource)
-
-community/+page.svelte   Community listing + create link
-community/create/+page.svelte  Create new community
-c/[slug]/+page.svelte    Community detail: posts + map + settings
-c/[slug]/map/+page.svelte        piggPin map view
-c/[slug]/settings/+page.svelte   Community settings
-
-messages/+page.svelte            Conversation list
-messages/[id]/+page.svelte       Single conversation thread
-notifications/+page.svelte        Notification feed
-federation/+page.svelte           Federation management
-
-admin/+page.svelte                Admin dashboard
-admin/communities/+page.svelte    Admin community management
-admin/users/+page.svelte          Admin user management
++page.svelte                 home / feed
++layout.svelte, +layout.ts   shell; ssr=false, prerender=false
+account/{login,signup,verify,forgot,reset}/   account lifecycle
+aid/+page.svelte             aid post list
+aid/new/+page.svelte         create a post (incl. click-to-place coordinates)
+p/[id]/+page.svelte          flat post permalink
+map/+page.svelte             OSM map of located posts
+search/+page.svelte          post/user search
+messages/+page.svelte        conversation list
+messages/[id]/+page.svelte   conversation thread
+notifications/+page.svelte
+users/[id]/+page.svelte      profile + endorsements
+admin/+page.svelte, admin/users/+page.svelte
 ```
 
-## Config system
-
-```
-config.example.toml  ──copy──►  config.toml  ──parse──►  Config struct
-                                                             │
-  .env ──dotenvy──► env vars ──apply_env_overrides───────────┘
-```
-
-Config sections: `[server]`, `[database]`, `[node]`, `[discovery]`, `[auth]`, `[federation]`, `[security]`, `[relay]`, `[posts]`, `[admin]`.
-
-Every section has `#[serde(default)]` with sensible `impl Default` in `config.rs`. Env vars override specific fields (documented in `config.example.toml`).
+The old `c/**`, `community/**` and `federation/**` route trees were deleted with the
+community model.
 
 ## Request lifecycle
 
-1. **Browser** makes fetch to `/api/...`
-2. **Service Worker** intercepts: network-first for API, cache-first for assets (see `service-worker.ts`)
-3. **Axum router** (`api/mod.rs`): matches path, applies CORS/tracing middleware
-4. **Auth middleware** (`require_auth` or `require_superadmin`): extracts Bearer token, verifies JWT
-5. **Handler** (in `api/*.rs`): validates input, calls DB layer
-6. **DB layer** (in `db/*.rs`): executes parameterized SQLx queries
-7. Response flows back as JSON
+1. The SPA calls the API through `web/src/lib/api/**` (the single client hub).
+2. Axum matches the route in `api/mod.rs`, applies CORS and the security-headers/trace layers.
+3. Protected routes run `require_auth`, which loads the session row (user id **and** role, so a
+   demotion takes effect immediately) from `sessions`.
+4. Handlers validate input and call `db/*`, which issues parameterized sqlx **runtime**
+   queries (`sqlx::query` / `query_as`, not the compile-time macros — so no `sqlx prepare`).
+5. The handler returns JSON; errors go through `api/error.rs`.
 
-## Relay (piggPin) architecture
+## Data and trust boundaries
 
-The relay is an optional embedded WebSocket service on port 9001. It provides real-time map collaboration for communities. Architecture:
+- **Server-visible:** email, password verifier, wrapped key bundles, session hashes, directory
+  entries. **Never server-visible:** the plaintext password, the password-derived key, the x25519 secret
+  in the clear, and message plaintext (the `messages` table stores ciphertext only).
+- **Config** (`config.rs`, `config.example.toml`) covers `[server]`, `[database]`, `[node]`,
+  `[discovery]`, `[auth]`, `[security]`, `[posts]`, `[admin]`, `[media]`, `[email]`,
+  `[registration]`, `[geocode]`. Environment variables override specific fields. There is no
+  `jwt_secret` and no `[relay]`/`[federation]`.
+- **Map**: `LocationMap.svelte` (Leaflet) is read-only on `/map` and opt-in *pickable* on
+  `aid/new`; the tile URL is a component default (operator-configurable later). No relay, no
+  map-community credentials.
 
-```
-TCP :9001 ──► relay_bridge::spawn_relay() ──► komun_relay::handler::handle()
-                                                    │
-                              ┌─────────────────────┼─────────────────────┐
-                              ▼                     ▼                     ▼
-                          manager.rs            room.rs              handler.rs
-                          (room lookup)        (per-room state)     (websocket framing)
-                              │                     │
-                              ▼                     ▼
-                          storage.rs            messages.rs
-                          (PersistentStore)     (protocol types)
-                              │
-                              ▼
-                      File system (data/relay/)
-
-Optional bridges (feature-gated):
-  mqtt_bridge.rs      ──► Meshtastic via MQTT
-  rnode.rs            ──► RNode hardware via serial
-  reticulum_bridge.rs ──► Reticulum network stack
-  peer_relay.rs       ──► Peer-to-peer relay mesh
-```
-
-The `PersistentStore` is shared between the server and relay via `Arc`. The server creates relay communities through `relay_ops::create_relay_community()`.
-
-## Key stores and state management
-
-| Store | Location | Persistence | Purpose |
-|---|---|---|---|
-| `auth` | `web/src/lib/stores/auth.ts` | localStorage | Per-server auth tokens, keypairs, encrypted bundle |
-| `serverState` | `web/src/lib/stores/server.ts` | localStorage | Active server URL, known servers |
-| `location` | `web/src/lib/stores/location.ts` | session-only | User location (lat/lon + name) |
-| `directories` | `web/src/lib/stores/directories.ts` | hardcoded | Directory server URLs |
-| `AppState` | `crates/server/src/main.rs` | in-memory | DB pool, config, relay store |
-| `AppState` (relay) | `crates/relay/src/state.rs` | in-memory + disk | Rooms, shares, rate limiter, store |
-| `PersistentStore` | `crates/relay/src/storage.rs` | filesystem | Community configs, key material |
+See `docs/DATABASE.md`, `docs/CRYPTO.md`, `docs/CONVENTIONS.md`, `docs/DEVELOPMENT.md` and
+`docs/DEPLOY.md`.

@@ -2,220 +2,113 @@
 
 # 🫱🏾‍🫲🏼 Komun
 
-**Federated mutual aid discovery — needs meet resources, encrypted.**
+**Mutual aid for one community — needs meet resources, conversations stay encrypted.**
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://rust-lang.org)
 [![SvelteKit](https://img.shields.io/badge/SvelteKit-5-ff3e00.svg)](https://svelte.dev)
-[![Tests](https://img.shields.io/badge/tests-110%20passed-brightgreen.svg)](https://git.komun.buzz/Book-Enjoyer/rev)
 
 </div>
 
 ---
 
-Communities post what they need and what they can give. Komun matches them through encrypted conversations. No surveillance. No central authority. Just people helping people.
+Komun is a single-server mutual aid platform. People post what they need, what they can give,
+and what they have to offer, then match and negotiate over end-to-end encrypted conversations.
+The server is the community — there is no multi-tenant layer and no federation.
 
----
+## Features
 
-## 🧩 Architecture
+- **Email + password accounts.** Verified at signup, reset by emailed link. No key ceremony and
+  no passphrase — users never see key material.
+- **Encrypted conversations.** Message plaintext is encrypted in the browser; the database
+  stores ciphertext only. See the honest limitation below.
+- **Flat posts.** One server-wide feed at `/api/posts`, with search, categories and TTLs.
+- **OSM map.** Leaflet with click-to-place coordinates on new posts; `/map` plots located posts.
+- **Optional public directory.** Advertise your server, and accept peer registrations, only when
+  you opt in.
+
+## Architecture
 
 ```
-     ┌──────────────┐
-     │   Browser    │  SvelteKit 5 SPA
-     └──────┬───────┘
-            │ HTTPS
-     ┌──────▼───────────────────────┐
-     │       Axum HTTP API          │
-     │         :3000                │
-     │                              │
-     │  ┌──────────┐  ┌──────────┐  │
-     │  │ JWT auth │  │ REST API │  │
-     │  │ challenge│  │ CRUD     │  │
-     │  └──────────┘  └──────────┘  │
-     │                              │
-     │  ┌──────────────────────┐    │
-     │  │  piggPin relay :9001 │────┼─── WebSocket
-     │  │  real-time map pins  │    │
-     │  └──────────────────────┘    │
-     └──────┬───────────────────────┘
-            │
-     ┌──────▼──────┐     ┌────────────┐
-     │  PostgreSQL │     │ WASM Crypto│
-     │     :5432   │     │ (client)   │
-     └─────────────┘     └────────────┘
+Browser (SvelteKit 5 SPA + komun-wasm)  ──HTTPS──▶  Axum server :3000  ──▶  PostgreSQL 16
+        x25519 · XChaCha20Poly1305 · Argon2
 ```
-
----
-
-## 📦 Crates
 
 | Crate | Role |
-|:------|:-----|
-| `crates/core` | ◇ Shared data models — Community, Post, Member, MatchThread |
-| `crates/server` | ◆ Axum API + JWT auth + DB queries + relay bridge + REPL |
-| `crates/wasm` | ◇ Client crypto — ed25519, x25519, ChaCha20Poly1305, Argon2, BIP39 |
-| `crates/relay` | ◆ piggPin WebSocket relay — per-community map pin sharing |
+|---|---|
+| `crates/core` | Shared models + the `db_enum!` macro |
+| `crates/server` | Axum API, sessions, sqlx queries, tasks, REPL |
+| `crates/wasm` | Client crypto: x25519, XChaCha20Poly1305, Argon2, recovery codes |
 
----
+See `docs/ARCHITECTURE.md`, `docs/CRYPTO.md`, `docs/DATABASE.md`.
 
-## 🚀 Quickstart
+## Quickstart
 
-### Prerequisites
-
-- **Rust** stable
-- **Node.js** 18+
-- **PostgreSQL** 16
-- **wasm-pack** — `cargo install wasm-pack`
-
-### Local dev
+Prerequisites: Rust (stable), Node 22 + npm 10, PostgreSQL 16, and `wasm-pack`.
 
 ```bash
-git clone https://git.komun.buzz/Book-Enjoyer/rev.git
-cd rev
+git clone <your-fork> komun && cd komun
 
-# Database
-docker compose up db -d
-cp config.example.toml config.toml     # ← edit this
+# 1. Database (see docs/DEVELOPMENT.md for the exact provisioning order — 001_schema.sql
+#    is applied by hand once, then the migrator takes over)
+createdb komun
 
-# Build
+# 2. Config
+cp config.example.toml config.toml     # point [database] url at your Postgres
+
+# 3. Build (wasm FIRST — the frontend depends on crates/wasm/pkg)
 wasm-pack build crates/wasm --target web
 cd web && npm install && npm run build && cd ..
 
-# Launch
+# 4. Run
 cargo run --bin komun-server
 ```
 
-→ Open `http://localhost:3000`
+Open `http://localhost:3000`.
 
-### Docker (one command)
+### Docker Compose
 
 ```bash
 cp config.example.toml config.toml
 docker compose up --build
 ```
 
-### TLS / Production
-
-Komun does **not** handle TLS itself — it expects a reverse proxy in front.
-
-**nginx example:**
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name komun.your-domain.org;
-
-    ssl_certificate     /etc/letsencrypt/live/komun/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/komun/privkey.pem;
-
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-    }
-
-    location /relay {
-        proxy_pass http://127.0.0.1:9001;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-```
-
-**Cloudflare:** Point DNS at Cloudflare, enable "Full (strict)" SSL, no further config needed.
-
-**Environment variables for production:**
+## Development
 
 ```bash
-export JWT_SECRET="your-strong-random-secret-at-least-32-chars"
-export DATABASE_URL="postgres://user:pass@host:5432/komun"
-```
-
-`JWT_SECRET` env var is **required** for production — the server warns on startup if it's missing and errors if the secret is too short.
-
----
-
-## 🔐 Security Model
-
-> **Secret keys never leave the client. Period.**
-
-| Layer | Technology |
-|:------|:-----------|
-| Signing | ed25519 keypair → challenge-auth → JWT (HS256) |
-| Encryption | x25519 ECDH → ChaCha20Poly1305 per-conversation keys |
-| Key storage | Passphrase → Argon2 → AES-256-GCM key bundle |
-| Recovery | BIP39 12-word code → Argon2 hash → server verification |
-| TLS | Terminated at reverse proxy / Cloudflare |
-
-### Key hierarchy
-
-```
-Passphrase ──▶ Argon2 ──▶ wrap key ──▶ decrypts key bundle
-                                           │
-                    ┌──────────────────────┘
-                    ▼
-            ed25519 secret ──▶ signs challenges ──▶ JWT
-            x25519 secret  ──▶ ECDH ──▶ conversation keys
-```
-
-### Auth flow
-
-1. Client generates ed25519 + x25519 keypair in WASM
-2. Server issues challenge → client signs → server verifies → JWT issued
-3. JWT carries `user_id` + `role` — zero DB round-trips for authorization
-4. (Optional) Passphrase encrypts key bundle for server-side recovery
-5. (Optional) BIP39 recovery code as backup identity factor
-
----
-
-## 📁 Project Layout
-
-```
-rev/
-├── crates/
-│   ├── core/src/models/       Data models
-│   ├── server/src/
-│   │   ├── api/               REST handlers
-│   │   ├── auth/              JWT + challenge-auth + middleware
-│   │   ├── db/                SQL queries per entity
-│   │   └── tasks/             Background jobs
-│   ├── wasm/src/              Client-side crypto (→ .wasm)
-│   └── relay/src/             piggPin WebSocket relay
-├── web/                       SvelteKit 5 SPA
-├── migrations/                SQLx migrations (additive)
-├── docker/                    Multi-stage Dockerfile
-├── config.example.toml        Reference config
-└── scripts/                   Utilities
-```
-
----
-
-## ✅ Tests
-
-```bash
+cargo build --workspace --all-targets
 cargo test --workspace
+cargo clippy --release -- -D warnings
+
+cd web && npm run check && npm run build && npx vitest run
 ```
 
-**110 tests, all green.** Server tests cover auth tokens, challenge flow, ed25519, and config parsing. Core tests cover model serialization, enum roundtrips, and type safety. DB integration tests require a running PostgreSQL instance.
+`docs/DEVELOPMENT.md` has the provisioning order, the migration rules, a runtime-gate recipe,
+and what a sandbox cannot verify (tiles, live SMTP, the wasm build).
 
----
+## Security model
 
-## 📐 Conventions
+- **Never leaves the client:** the x25519 secret key, the password-derived key, the recovery code, and
+  message plaintext.
+- **The server stores:** the email, the Argon2id password verifier, wrapped key bundles, hashed
+  session tokens, and ciphertext.
+- **Sessions** are opaque 256-bit tokens stored only as a hash; the role is loaded from the
+  database on every request, so revocations and demotions take effect immediately.
+- **No JWT and no ed25519** anywhere.
 
-| Rule | Because |
-|:-----|:--------|
-| UUIDv7 for all PKs | Time-sortable, no collisions |
-| `cargo check` clean before commit | Don't merge broken builds |
-| Migrations are additive | Never edit existing `.sql` files |
-| Secrets never logged | `tracing::info!()` == metadata only |
-| `config.toml` + `.env` gitignored | Secrets stay local |
-| Svelte 5 runes only | `$state()` `$derived()` `$effect()` `$props()` — no `$:` |
+### Honest limitation
 
----
+Browser-delivered end-to-end encryption **cannot** protect against a malicious server that
+serves modified JavaScript. This design protects against database theft, passive disk reads, an
+operator reading message content, and admin snooping. It does not protect against a hostile
+operator who ships modified client code.
 
-## 📜 License
+## Deploying
+
+See `docs/DEPLOY.md` for a self-hosting walkthrough (release binary, service, database, TLS in
+front). `deploy/` holds starting-point assets.
+
+## License
 
 **AGPL-3.0-or-later** — [LICENSE](LICENSE)
 

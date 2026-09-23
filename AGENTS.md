@@ -1,119 +1,118 @@
 # AGENTS.md — Komun
 
+Cold-start guide for an agent working in this repo. Keep it accurate: if code and this file
+disagree, fix one of them.
+
 ## What this is
 
-Komun is a federated mutual aid discovery platform. It lets communities post needs/offers/resources and match them via encrypted conversations. Rust backend (Axum), SvelteKit SPA frontend, PostgreSQL, AGPL-3.0.
+A **single-server** mutual-aid web app. People post needs/offers/resources, search them, and
+negotiate over end-to-end-encrypted conversations. Rust backend (Axum + sqlx, PostgreSQL 16),
+SvelteKit 5 SPA frontend, client crypto in WASM, AGPL-3.0. There is no multi-tenant community
+layer, no federation, and no relay — those were removed in the reshape.
 
 ## Critical rules
 
 ### Never commit these
-- `config.toml` — gitignored, contains secrets
+- `config.toml` — gitignored, holds the DB URL and optional SMTP credentials
 - `.env` / `.env.local` — gitignored
 - `crates/wasm/pkg/` — build artifact, gitignored
 - `web/build/` — build artifact, gitignored
 
-### Build order matters
-The WASM crate must be built before the frontend, and the frontend before the server can serve static files:
+### Build order
+The wasm package must exist before the frontend is installed, and the frontend before the
+server can serve static files:
 
+```bash
+wasm-pack build crates/wasm --target web     # 1. -> crates/wasm/pkg/
+cd web && npm install && npm run build       # 2. package.json needs pkg/ to exist
+cargo build --release --bin komun-server     # 3.
 ```
-wasm-pack build crates/wasm --target web
-cd web && npm install && npm run build
-cargo build --release --bin komun-server
-```
 
-If you change crypto in `crates/wasm/`, you must rebuild the WASM pkg and the frontend.
+If you change crypto in `crates/wasm/`, rebuild the wasm package **and** the frontend.
 
-### Docker builds use runtime queries
-The Dockerfile sets `ENV SQLX_OFFLINE=true` as a safety measure, but since all queries use `sqlx::query()` / `sqlx::query_as()` (runtime), not `sqlx::query!()` (compile-time), no `sqlx prepare` step is needed. Docker builds work as-is.
+### sqlx uses runtime queries
+All queries use `sqlx::query()` / `sqlx::query_as()`, not the compile-time macros. No
+`cargo sqlx prepare` step and no offline query cache — Docker builds work as-is.
 
-### Svelte 5 runes only
-No `$:`, no `export let`, no `on:click`. Use `$state()`, `$derived()`, `$effect()`, `$props()`, `onclick={handler}`.
+### Frontend is Svelte 5 runes only
+No `$:`, no `export let`, no `on:click`. Use `$state`, `$derived`, `$effect`, `$props`, and
+`onclick={handler}`.
+
+### Migrations are frozen at 001
+`migrations/001_schema.sql` is checksum-bookmarked in every provisioned database — editing one
+byte makes every existing server refuse to boot. Schema changes are additive files
+(`002_*.sql`, …). See `docs/DEVELOPMENT.md`.
 
 ### Crypto boundaries
-- Secret keys NEVER leave the client. The server only stores public keys and encrypted key bundles.
-- The passphrase NEVER leaves the client. Only the recovery ID (Argon2 hash) goes to the server.
-- Do not log keys, bundles, or passphrases anywhere.
+- The **x25519 secret key, the password-derived key and the recovery code never leave the client**; the
+  server stores public keys and wrapped bundles only.
+- The schema has **no plaintext message column** (`messages.ciphertext` only).
+- **Never log** keys, bundles, passwords, derived keys, or message plaintext.
+- There is no ed25519 key and no JWT; sessions are opaque database rows.
 
 ## Code layout
 
 | Path | What | Be careful |
 |---|---|---|
-| `crates/core/` | Shared data models (Community, Member, Post, MatchThread) | Changes here affect both server and client expectations |
-| `crates/server/` | Axum HTTP server, REST API, DB queries, auth, REPL | Bootstrap in `main.rs`, routes in `api/mod.rs` |
-| `crates/wasm/` | Client-side crypto compiled to WASM (ed25519, x25519, chacha20, argon2) | Breaking changes here break all encryption |
-| `crates/relay/` | piggPin WebSocket map relay with optional bridges (MQTT, RNode, Reticulum) | Feature-gated; default build has no bridges |
-| `web/` | SvelteKit SPA frontend (static adapter) | SPA mode: `ssr = false`, `prerender = false` |
-| `migrations/` | SQLx migrations (numbered, additive) | Never edit existing migrations; add new ones |
-| `docker/` | Multi-stage Dockerfile | Builds Rust + frontend separately |
-| `config.example.toml` | Documented config template | Keep in sync with `config.rs` defaults |
-| `scripts/` | Utility scripts (sync-server-repo.sh) | |
+| `crates/core/` | Shared models + `db_enum!` macro | Changes affect server and client expectations; the enum↔CHECK test lives in `crates/core/src/tests.rs` |
+| `crates/server/` | Axum HTTP server, auth/sessions, DB queries, tasks, REPL | Bootstrap in `main.rs`, routes in `api/mod.rs`, config in `config.rs` |
+| `crates/wasm/` | Client crypto → WASM (x25519, XChaCha20Poly1305, Argon2, recovery codes) | Breaking changes here break all encryption; rebuild pkg + frontend |
+| `web/` | SvelteKit 5 SPA (static adapter, `ssr = false`) | Runes only; the API client `web/src/lib/api/**` is the single hub |
+| `migrations/` | `001_schema.sql` (frozen) + additive migrations | Never edit `001`; add `002+` |
+| `docs/` | ARCHITECTURE, CONVENTIONS, CRYPTO, DATABASE, DEVELOPMENT, DEPLOY | Keep in sync with the code |
+| `deploy/` | nginx/OpenRC/setup/seed starting points | Docs only; no relay/WebSocket proxy |
+| `config.example.toml` | Documented config template | Keep in sync with `config.rs` defaults; it must boot |
+| `scripts/` | Utility scripts | |
 
 ## Quickstart (local dev)
 
 ```bash
-# Start PostgreSQL
-docker compose up db -d
+# config
+cp config.example.toml config.toml        # edit [database] url
 
-# Build WASM
+# build (wasm first!)
 wasm-pack build crates/wasm --target web
-
-# Build frontend
 cd web && npm install && npm run build && cd ..
 
-# Run server (requires config.toml — copy from config.example.toml and edit)
-cp config.example.toml config.toml
-cargo run --bin komun-server
+# run
+cargo run --bin komun-server              # -> http://localhost:3000
 ```
-
-## Quickstart (full Docker)
-
-```bash
-docker compose up --build
-```
-
-Opens on `http://localhost:3000`.
 
 ## Key architecture facts
 
-- UUIDv7 is used for all primary keys (time-sortable)
-- JWT auth with HS256, token in `Authorization: Bearer <token>` header
-- Auth middleware: `require_auth` (any user), `require_superadmin` (role check)
-- API handlers return `Result<Json<T>, (StatusCode, Json<Value>)>`
-- Config loaded from `config.toml` with env var overrides (see `config.rs`)
-- Background tasks spawned in `tasks/` for expiry, bundle cleanup, health checks
-- REPL available when run in a terminal (type `help` for commands)
-- Service worker provides offline caching for API and assets
-- PWA with standalone display mode, SVG icon
-
-## Docker Compose
-
-Two services: `db` (postgres:16-alpine) and `app` (the Rust binary). Ports 5432 and 3000. Named volume `pgdata` for persistence.
+- UUIDv7 primary keys (time-sortable).
+- Auth: email + password verifier (Argon2id), opaque DB sessions; **no JWT**. Middleware is
+  `require_auth` / `require_admin` / `require_superadmin`, and it loads the role from the DB on
+  every request.
+- API: flat `/api/posts`, `/api/search`, `/api/auth/**`, `/api/users/**`, `/api/me/*`,
+  `/api/conversations/*`, `/api/admin/*`; `/api/alliances` and `/api/communities` do not exist.
+- Config is loaded from `config.toml` (or `KOMUN_CONFIG`) with env overrides; the server runs
+  migrations on startup.
+- Background tasks live in `tasks/` (expiry, health, directory registration, bundle cleanup).
+- The REPL starts when stdin is a terminal (type `help`).
+- The service worker caches assets and API responses; the app is a PWA with standalone display.
 
 ## Tests
 
-There are currently no automated tests. Manual verification is done by running the server and frontend.
+```bash
+cargo test --workspace     # komun-core + komun-server unit tests
+cargo clippy --release -- -D warnings   # must stay at zero warnings
+cd web && npm run check && npm run build && npx vitest run
+```
 
-## Security Model
+The frontend is currently at **0 svelte-check errors/warnings** and all vitest suites pass.
+The enum↔CHECK agreement test reads `migrations/001_schema.sql` at test time.
 
-### Threat Model
-- **Attacker capabilities:** Network observer, compromised relay node, XSS via user-generated content, disk access to server
-- **Out of scope:** Physical device compromise, supply chain attacks on dependencies, quantum adversaries
+## Security model (short)
 
-### Crypto Boundaries
-- **Client-side (WASM):** ed25519 key generation/signing, x25519 ECDH, ChaCha20Poly1305 encryption, Argon2 key derivation, BIP39 recovery codes
-- **Server-side:** JWT HS256, TLS termination
-- **Never leaves client:** ed25519 secret key, x25519 secret key, passphrase, recovery code (only Argon2 hash sent to server)
-- **Server stores:** Public keys, encrypted key bundles, recovery_id (Argon2 hash), recovery_code_hash (Argon2 hash)
+Threat model: network observer, compromised client state, XSS via user content, disk access to
+the server. Out of scope: device compromise, supply-chain attacks, quantum adversaries.
+Server-side crypto is limited to Argon2id verifier hashing and TLS termination at a proxy.
 
-### Key Hierarchy
-1. Passphrase → Argon2 → wrap key → decrypts key bundle (ed25519 secret + x25519 secret)
-2. ed25519 key → signs challenges → JWT token (includes role claim)
-3. x25519 key → ECDH → conversation encryption keys (ChaCha20Poly1305)
-4. Recovery code (BIP39 12 words) → Argon2 → recovery_code_hash → server verifies
+**Honest limitation:** browser-delivered E2E cannot protect against a malicious server serving
+modified JavaScript. It protects against database theft, passive disk reads, an operator reading
+message content, and admin snooping — not against a hostile operator who ships modified client
+code.
 
-### Auth Flow
-1. Client generates ed25519 + x25519 keypair in WASM
-2. Server issues challenge → client signs with ed25519 → server verifies → JWT issued
-3. JWT contains user_id (sub) and role — no DB query needed for authorization
-4. Optional: passphrase encrypts key bundle for server-side recovery
-5. Optional: BIP39 recovery code as backup identity factor
+More detail: `docs/ARCHITECTURE.md`, `docs/CRYPTO.md`, `docs/DATABASE.md`,
+`docs/DEVELOPMENT.md`, `docs/CONVENTIONS.md`, `docs/DEPLOY.md`.
