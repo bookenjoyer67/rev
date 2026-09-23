@@ -14,7 +14,7 @@ docker exec -w /workspace/web agent-repo-agent-a bash -c \
 |------|--------|--------------------|
 | `npm run check` | **14 errors, 37 warnings in 8 files** | **unchanged — no new diagnostic** |
 | `npm run build` | green, `Using @sveltejs/adapter-static`, `Wrote site to "build"` | unchanged |
-| `npx vitest run` | **1 failed \| 43 passed (44)** | baseline was 1 failed \| 42 passed (43) → **+1 passing, same single failure** |
+| `npx vitest run` | **1 failed \| 46 passed (47)** | baseline was 1 failed \| 42 passed (43) → **+1 passing, same single failure** |
 
 The single failure is `src/tests/AidCard.test.ts > AidCard > shows community name and server` — inherited,
 and it belongs to **A6** (the community UI this reshape deletes). It is not a regression from any card.
