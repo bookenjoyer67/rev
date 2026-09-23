@@ -40,7 +40,7 @@ sw.addEventListener('fetch', (event) => {
 		return;
 	}
 
-	const CACHEABLE_API_PATHS = ['/api/node', '/api/health', '/api/communities', '/api/directory'];
+	const CACHEABLE_API_PATHS = ['/api/node', '/api/health', '/api/posts', '/api/directory'];
 	const isCacheableApi = CACHEABLE_API_PATHS.some(p => url.pathname.startsWith(p));
 
 	if (isCacheableApi) {

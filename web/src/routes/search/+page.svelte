@@ -1,27 +1,26 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
+    import { onMount, untrack } from 'svelte';
     import { goto } from '$app/navigation';
     import { getActiveServer, isConnected } from '$lib/stores/server';
-    import { api } from '$lib/api/client';
 
     let { data } = $props();
     let q = $derived(data.q || '');
 
     let posts: any[] = $state([]);
-    let communities: any[] = $state([]);
     let users: any[] = $state([]);
     let tab = $state('posts');
     let loading = $state(true);
     let error = $state('');
 
-    let searchQuery = $state(q);
+    // The box is an editable copy seeded once from the URL's `q`, not a mirror of it — typing
+    // must not be overwritten by the prop. `untrack` marks that one-time read as deliberate.
+    let searchQuery = $state(untrack(() => data.q || ''));
 
     onMount(async () => {
         if (!isConnected()) { goto('/connect'); return; }
         if (!searchQuery) return;
         await Promise.all([
             searchPosts(),
-            searchCommunities(),
             searchUsers(),
         ]);
         loading = false;
@@ -33,11 +32,8 @@
         } catch (e) { }
     }
 
-    async function searchCommunities() {
-        try {
-            communities = await fetch(`${getActiveServer()}/api/search/communities?q=${encodeURIComponent(searchQuery)}`).then(r => r.json());
-        } catch (e) { }
-    }
+    // A3 deleted `/api/search/communities` along with the model it searched. What is left to
+    // search on a flat server is posts and people.
 
     async function searchUsers() {
         try {
@@ -52,7 +48,7 @@
     }
 
     function kindBadge(kind: string): string {
-        const m: Record<string, string> = { need: 'Need', offer: 'Offer', resource: 'Resource' };
+        const m: Record<string, string> = { need: 'Need', offer: 'Offer', resource: 'Resource', listing: 'Listing', want: 'Want' };
         return m[kind] || kind;
     }
 
@@ -68,7 +64,7 @@
             <input
                 type="search"
                 bind:value={searchQuery}
-                placeholder="Search posts, communities, users..."
+                placeholder="Search posts and users..."
                 class="search-input"
             />
         </form>
@@ -77,9 +73,6 @@
     <div class="tabs">
         <button class="tab" class:active={tab === 'posts'} onclick={() => tab = 'posts'}>
             Posts ({posts.length})
-        </button>
-        <button class="tab" class:active={tab === 'communities'} onclick={() => tab = 'communities'}>
-            Communities ({communities.length})
         </button>
         <button class="tab" class:active={tab === 'users'} onclick={() => tab = 'users'}>
             Users ({users.length})
@@ -96,37 +89,18 @@
                 <ul class="results-list">
                     {#each posts as post}
                         <li class="result-item">
-                            <a href="/c/{post.community_slug}" class="post-community">{post.community_name}</a>
                             <div class="post-header">
                                 <span class="kind-badge kind-{post.kind}">{kindBadge(post.kind)}</span>
                                 {#if post.urgency}
                                     <span class="urgency" style="color: {urgencyColor(post.urgency)}">● {post.urgency}</span>
                                 {/if}
                             </div>
-                            <h3>{post.title}</h3>
+                            <h3><a href="/p/{post.id}">{post.title}</a></h3>
                             {#if post.body}
                                 <p class="post-body">{post.body.slice(0, 200)}{post.body.length > 200 ? '...' : ''}</p>
                             {/if}
                             {#if post.location_name}
                                 <span class="location">{post.location_name}</span>
-                            {/if}
-                        </li>
-                    {/each}
-                </ul>
-            {/if}
-        {:else if tab === 'communities'}
-            {#if communities.length === 0}
-                <div class="empty"><p>No communities found for "{q}".</p></div>
-            {:else}
-                <ul class="results-list">
-                    {#each communities as c}
-                        <li class="result-item">
-                            <a href="/c/{c.slug}"><strong>{c.name}</strong></a>
-                            {#if c.description}
-                                <p class="desc">{c.description}</p>
-                            {/if}
-                            {#if c.location_name}
-                                <span class="location">{c.location_name}</span>
                             {/if}
                         </li>
                     {/each}
@@ -227,13 +201,6 @@
         font-weight: 600;
     }
 
-    .post-community {
-        font-size: 0.75rem;
-        color: var(--text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-
     .post-header {
         display: flex;
         gap: 0.5rem;
@@ -268,12 +235,6 @@
     .location {
         font-size: 0.75rem;
         color: var(--text-muted);
-    }
-
-    .desc {
-        font-size: 0.85rem;
-        color: var(--text-muted);
-        margin-top: 0.15rem;
     }
 
     .user-meta {

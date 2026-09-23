@@ -289,7 +289,7 @@
 	<section class="section">
 		<h2>Bio</h2>
 		<form onsubmit={(e) => { e.preventDefault(); saveBio(); }}>
-			<textarea bind:value={bio} maxlength="500" placeholder="Tell communities about yourself..." rows="4"></textarea>
+			<textarea bind:value={bio} maxlength="500" placeholder="Tell people about yourself..." rows="4"></textarea>
 			{#if bioError}<p class="error">{bioError}</p>{/if}
 			<button type="submit" class="save-btn" disabled={bioSaving}>
 				{bioSaving ? 'Saving...' : bioSaved ? 'Saved!' : 'Save Bio'}

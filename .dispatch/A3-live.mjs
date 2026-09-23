@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * A3 runtime gate against komun_a on port 3011.
+ * A3 runtime gate. Re-runnable: every assertion is about the rows THIS run created.
  *
  * Every call below is the real server over HTTP. The signup payload's crypto is the same
  * stand-in A2b used (scrypt where the real client uses Argon2id, node's own x25519 and
@@ -9,13 +9,58 @@
  * sealed conversation, and the absence of any tenant key in any response body.
  *
  *   node .dispatch/A3-live.mjs
+ *   KOMUN_CONFIG=/tmp/a3run/config.toml node .dispatch/A3-live.mjs
+ *   KOMUN_BASE=http://127.0.0.1:3011 DATABASE_URL=postgres://… node .dispatch/A3-live.mjs
+ *
+ * A6.0 fixed two defects that made re-runs lie:
+ *
+ *  1. The assertions counted rows in shared tables (`feed has both posts` compared the feed
+ *     length to 2), so a second run failed on the fixtures the first one left behind. They now
+ *     assert that the ids this run created are PRESENT, which is true whatever else is in the
+ *     database.
+ *  2. `sql()` used a hardcoded `komun_a` connection while the server read its own from the
+ *     config, so pointing the server at another database sent every DB claim to the wrong one —
+ *     reporting a failure whose only cause was that the id being asked about lives elsewhere.
+ *     The connection now comes from the same place the server's does, in the same order:
+ *     `DATABASE_URL`, else `[database] url` of the config at `KOMUN_CONFIG` (default
+ *     `config.toml`, resolved from the repo root like the server resolves it from its cwd).
  */
 
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-const BASE = 'http://127.0.0.1:3011';
-const DB = ['-h', 'komun-db-a', '-U', 'komun', '-d', 'komun_a'];
+const BASE = process.env.KOMUN_BASE ?? 'http://127.0.0.1:3011';
+
+/**
+ * The server's own precedence: `DATABASE_URL` wins over the config file (`config.rs::load`
+ * overlays the env var on top of the parsed TOML), and the config path is `KOMUN_CONFIG` or
+ * `config.toml`.
+ */
+function databaseUrl() {
+	if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+
+	const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+	const configPath = process.env.KOMUN_CONFIG ?? path.join(repoRoot, 'config.toml');
+	let toml;
+	try {
+		toml = fs.readFileSync(configPath, 'utf8');
+	} catch {
+		throw new Error(
+			`no DATABASE_URL and no readable config at ${configPath} — ` +
+			`pass one of them so the DB assertions query the database the server is using`
+		);
+	}
+	// Good enough for `[database] url = "…"`: the first `url =` after the `[database]` header.
+	const section = toml.split(/^\[database\]$/m)[1];
+	const match = section && section.split(/^\[/m)[0].match(/^\s*url\s*=\s*"([^"]+)"/m);
+	if (!match) throw new Error(`no [database] url in ${configPath}`);
+	return match[1];
+}
+
+const DB_URL = databaseUrl();
 
 let failures = 0;
 
@@ -25,9 +70,7 @@ function ok(name, cond, detail = '') {
 }
 
 function sql(query) {
-	return execFileSync('psql', [...DB, '-tAc', query], {
-		env: { ...process.env, PGPASSWORD: 'komun' }, encoding: 'utf8',
-	}).trim();
+	return execFileSync('psql', [DB_URL, '-tAc', query], { encoding: 'utf8' }).trim();
 }
 
 const b64 = (buf) => Buffer.from(buf).toString('base64');
@@ -96,6 +139,16 @@ async function signup(tag) {
 			encrypted_recovery_bundle: b64(rec.bundle), recovery_bundle_salt: b64(rec.salt),
 		},
 	});
+	if (res.status === 429) {
+		// A2a's signup rate limiter is per-IP and this harness burns two accounts per run, so
+		// a few back-to-back runs exhaust the window. That is the server working, not a
+		// regression — say so, rather than leaving the next runner to decode a bare 429.
+		const wait = res.json?.retry_after_seconds ?? '?';
+		throw new Error(
+			`signup ${tag} hit A2a's rate limiter (429). Not a failure of the flow under test — ` +
+			`wait ${wait}s and re-run, or restart the server to reset the window.`
+		);
+	}
 	if (res.status !== 200) throw new Error(`signup ${tag} failed: ${res.status} ${res.text}`);
 	return { email, token: res.json.token ?? res.json.session_token, id: res.json.user?.id ?? res.json.user_id };
 }
@@ -139,8 +192,11 @@ ok('market fields on a non-market kind → 400', bad.status === 400, `status ${b
 // 2. GET /api/posts — the feed.
 const feed = await req('GET', '/api/posts', { label: 'GET /api/posts' });
 ok('feed → 200', feed.status === 200, `status ${feed.status}`);
-ok('feed has both posts', Array.isArray(feed.json) && feed.json.length === 2,
-	`${feed.json?.length} entries`);
+// Containment, not a count: the feed is a shared table and earlier runs leave rows in it.
+const feedIds = new Set((feed.json ?? []).map((p) => p.id));
+ok('the feed contains both posts this run created',
+	Array.isArray(feed.json) && feedIds.has(need.json.id) && feedIds.has(listing.json.id),
+	`${feed.json?.length} entries in the feed`);
 
 // 3. GET /api/posts/{id}.
 const one = await req('GET', `/api/posts/${need.json.id}`, { label: 'GET /api/posts/{id}' });
@@ -151,7 +207,11 @@ ok('an unknown post → 404, not 500', missing.status === 404, `status ${missing
 // 4. Search.
 const search = await req('GET', '/api/search?q=coats', { label: 'GET /api/search?q=coats' });
 ok('search → 200 (tags decode from TEXT[])', search.status === 200, `status ${search.status}`);
-ok('search finds the need', search.json?.[0]?.id === need.json.id);
+// Containment again: "coats" matches every need a previous run inserted, and relevance
+// ordering is not this card's claim — that the row THIS run created comes back is.
+ok('search finds the need this run created',
+	Array.isArray(search.json) && search.json.some((r) => r.id === need.json.id),
+	`${search.json?.length} hits`);
 
 // 5. A conversation thread, sealed.
 const ct1 = crypto.randomBytes(48), n1 = crypto.randomBytes(12);
@@ -192,9 +252,12 @@ const convos = await req('GET', '/api/me/conversations', {
 	label: 'GET /api/me/conversations', token: bob.token,
 });
 ok('conversation list → 200', convos.status === 200, `status ${convos.status}`);
+// Bob accumulates conversations across runs, so address the one this run opened by id
+// rather than trusting position 0.
+const mine = (convos.json ?? []).find((c) => (c.match_id ?? c.id) === matchId);
 ok('the list preview is ciphertext, not text',
-	convos.json?.[0]?.last_message_ciphertext === b64(ct2),
-	convos.json?.[0]?.last_message_ciphertext);
+	mine?.last_message_ciphertext === b64(ct2),
+	mine?.last_message_ciphertext);
 
 // The DB side of A3.3: nothing readable was stored.
 ok('matches.message is NULL — no plaintext copy of the opening message',

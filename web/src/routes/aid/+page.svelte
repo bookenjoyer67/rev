@@ -5,28 +5,13 @@
 	import { auth } from '$lib/stores/auth';
 	import { api } from '$lib/api/client';
 	import RespondModal from '$lib/components/RespondModal.svelte';
+	import type { PostLike } from '$lib/api/types';
 
-	interface Post {
-		id: string;
-		kind: 'resource' | 'need' | 'offer';
-		category: string;
-		title: string;
-		body?: string;
-		location_name?: string;
-		urgency?: 'critical' | 'high' | 'medium' | 'low';
-		status: string;
-		author_id: string;
-		images?: string[];
-	}
-
-	interface Community {
-		slug: string;
-		name: string;
-	}
+	// A3.1 made posts a flat, server-wide collection: this page is the whole feed of the
+	// server you are connected to, with no community to pick first.
+	type Post = PostLike;
 
 	let posts: Post[] = $state([]);
-	let communities: Community[] = $state([]);
-	let selectedCommunity = $state('');
 	let filter = $state('all');
 	let searchQuery = $state('');
 	let loading = $state(true);
@@ -36,14 +21,13 @@
 	let editBody = $state('');
 
 	async function fulfillPost(postId: string) {
-		if (!selectedCommunity) return;
-		await api.posts.fulfill(selectedCommunity, postId);
+		await api.posts.update(postId, { status: 'fulfilled' });
 		await loadPosts();
 	}
 
 	async function deletePost(postId: string) {
-		if (!selectedCommunity || !confirm('Delete this post?')) return;
-		await api.posts.withdraw(selectedCommunity, postId);
+		if (!confirm('Delete this post?')) return;
+		await api.posts.delete(postId);
 		await loadPosts();
 	}
 
@@ -54,8 +38,8 @@
 	}
 
 	async function saveEdit() {
-		if (!selectedCommunity || !editingId) return;
-		await api.posts.update(selectedCommunity, editingId, {
+		if (!editingId) return;
+		await api.posts.update(editingId, {
 			title: editTitle.trim(),
 			body: editBody.trim() || undefined,
 		});
@@ -69,28 +53,23 @@
 		return $auth.servers?.[server]?.userId || null;
 	})());
 
-	const kindLabels: Record<string, string> = { resource: 'Resource', need: 'Need', offer: 'Offer' };
+	const kindLabels: Record<string, string> = {
+		resource: 'Resource', need: 'Need', offer: 'Offer', listing: 'Listing', want: 'Want'
+	};
 	const urgencyColors: Record<string, string> = { critical: 'var(--critical)', high: 'var(--warning)', medium: 'var(--text-muted)', low: 'var(--text-muted)' };
 
 	onMount(async () => {
 		if (!isConnected()) { goto('/connect'); return; }
-		try {
-			communities = await api.communities.list();
-			if (communities.length > 0) {
-				selectedCommunity = communities[0].slug;
-				await loadPosts();
-			}
-		} catch (e) {}
+		await loadPosts();
 		loading = false;
 	});
 
 	async function loadPosts() {
-		if (!selectedCommunity) return;
 		try {
 			const filters: Record<string, string> = {};
 			if (filter !== 'all') filters.kind = filter;
 			if (searchQuery.trim()) filters.q = searchQuery.trim();
-			posts = await api.posts.list(selectedCommunity, filters);
+			posts = await api.posts.list(filters);
 		} catch (e) {
 			posts = [];
 		}
@@ -104,28 +83,13 @@
 		filter = f;
 		loadPosts();
 	}
-
-	function setCommunity(slug: string) {
-		selectedCommunity = slug;
-		loadPosts();
-	}
 </script>
 
 <div class="container">
 	<header class="page-header">
 		<h1>Mutual Aid</h1>
-		{#if communities.length > 0}
-			<a href="/aid/new" class="btn btn-primary">Post</a>
-		{/if}
+		<a href="/aid/new" class="btn btn-primary">Post</a>
 	</header>
-
-	{#if communities.length > 1}
-		<div class="community-select">
-			{#each communities as c}
-				<button class:active={selectedCommunity === c.slug} onclick={() => setCommunity(c.slug)}>{c.name}</button>
-			{/each}
-		</div>
-	{/if}
 
 	<form class="search-bar" onsubmit={(e) => { e.preventDefault(); handleSearch(); }}>
 		<input type="text" bind:value={searchQuery} placeholder="Search posts..." />
@@ -143,8 +107,6 @@
 
 	{#if loading}
 		<p class="status">Loading...</p>
-	{:else if communities.length === 0}
-		<p class="status">No communities yet. <a href="/community/create">Create one</a> to start posting.</p>
 	{:else if posts.length === 0}
 		<p class="status">No posts yet. Be the first to share a need, offer, or resource.</p>
 	{:else}
@@ -211,7 +173,7 @@
 
 {#if respondingTo}
 	<RespondModal
-		post={{ id: respondingTo.id, title: respondingTo.title, kind: respondingTo.kind, server_url: getActiveServer() || '', community_slug: selectedCommunity, author_id: respondingTo.author_id }}
+		post={{ id: respondingTo.id, title: respondingTo.title, kind: respondingTo.kind, server_url: getActiveServer() || '', author_id: respondingTo.author_id }}
 		onClose={() => respondingTo = null}
 	/>
 {/if}
@@ -241,28 +203,6 @@
 	.search-bar input { flex: 1; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.6rem 2rem 0.6rem 0.75rem; color: var(--text); font-size: 0.9rem; }
 	.search-bar input:focus { outline: none; border-color: var(--accent); }
 	.clear-search { position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%); background: none; color: var(--text-muted); font-size: 1.2rem; min-height: 30px; min-width: 30px; }
-
-	.community-select {
-		display: flex;
-		gap: 0.5rem;
-		margin-bottom: 1rem;
-		flex-wrap: wrap;
-	}
-
-	.community-select button {
-		background: var(--bg-surface);
-		color: var(--text-muted);
-		padding: 0.4rem 0.8rem;
-		border-radius: var(--radius);
-		font-size: 0.85rem;
-		border: 1px solid var(--border);
-	}
-
-	.community-select button.active {
-		background: var(--bg-elevated);
-		color: var(--text);
-		border-color: var(--text-muted);
-	}
 
 	.filters {
 		display: flex;
@@ -370,7 +310,6 @@
 	@media (max-width: 480px) {
 		.page-header { flex-direction: column; gap: 0.5rem; align-items: flex-start; }
 		.filters { flex-wrap: wrap; }
-		.community-select { flex-wrap: wrap; }
 		.post-footer { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
 		.author-actions { margin-left: 0; }
 		.respond-btn { margin-left: 0; }

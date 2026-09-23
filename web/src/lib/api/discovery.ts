@@ -1,5 +1,6 @@
 import { getDirectories } from '$lib/stores/directories';
 import { getLocation } from '$lib/stores/location';
+import type { PostLike } from '$lib/api/types';
 
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
 	const R = 6371;
@@ -11,54 +12,43 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 	return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/**
+ * A3.2 squashed `directory_entries`: a server registering itself advertises one location, its
+ * own. `communities_count` and `matched_community` are no longer columns and no longer
+ * serialised, so they are gone from here too rather than reading as `undefined` forever.
+ */
 export interface NearbyServer {
 	url: string;
 	name: string;
 	description?: string;
 	location_name?: string;
-	communities_count: number;
-	distance_km?: number;
-	matched_community?: {
-		slug: string;
-		name: string;
-		location_name?: string;
-	};
-}
-
-export interface DiscoveredCommunity {
-	slug: string;
-	name: string;
-	description?: string;
-	server_url: string;
-	server_name: string;
-}
-
-export interface AggregatedPost {
-	id: string;
-	kind: 'resource' | 'need' | 'offer';
-	category: string;
-	title: string;
-	body?: string;
-	location_name?: string;
 	location_lat?: number;
 	location_lon?: number;
-	urgency?: string;
-	status: string;
-	author_id: string;
-	images?: string[];
-	contact_method?: string;
-	created_at: string;
+	distance_km?: number;
+}
+
+/** A post gathered from another server, tagged with where it came from. */
+export interface AggregatedPost extends PostLike {
 	server_url: string;
 	server_name: string;
 	server_location?: string;
-	community_slug: string;
-	community_name: string;
 }
 
 export interface DiscoveryResult {
 	servers: NearbyServer[];
-	communities: DiscoveredCommunity[];
 	posts: AggregatedPost[];
+}
+
+function toServer(entry: any): NearbyServer {
+	return {
+		url: entry.url,
+		name: entry.name,
+		description: entry.description,
+		location_name: entry.location_name,
+		location_lat: entry.location_lat ?? undefined,
+		location_lon: entry.location_lon ?? undefined,
+		distance_km: entry.distance_km,
+	};
 }
 
 export async function discoverNearbyServers(): Promise<NearbyServer[]> {
@@ -73,15 +63,7 @@ export async function discoverNearbyServers(): Promise<NearbyServer[]> {
 			const res = await fetch(url);
 			if (!res.ok) return [];
 			const data = await res.json();
-			return data.map((entry: any) => ({
-				url: entry.url,
-				name: entry.name,
-				description: entry.description,
-				location_name: entry.location_name,
-				communities_count: entry.communities_count || 0,
-				distance_km: entry.distance_km,
-				matched_community: entry.matched_community,
-			}));
+			return data.map(toServer);
 		})
 	);
 
@@ -91,12 +73,8 @@ export async function discoverNearbyServers(): Promise<NearbyServer[]> {
 	for (const result of results) {
 		if (result.status === 'fulfilled') {
 			for (const server of result.value) {
-				const mc = server.matched_community
-					? { slug: server.matched_community.slug, name: server.matched_community.name, location_name: server.matched_community.location_name }
-					: undefined;
-				const key = mc ? `${server.url}#${mc.slug}` : server.url;
-				if (!seen.has(key)) {
-					seen.add(key);
+				if (!seen.has(server.url)) {
+					seen.add(server.url);
 					allServers.push(server);
 				}
 			}
@@ -114,13 +92,7 @@ export async function discoverAllServers(): Promise<NearbyServer[]> {
 		dirs.map(async (dirUrl) => {
 			const res = await fetch(`${dirUrl}/api/directory`);
 			if (!res.ok) return [];
-			return (await res.json()).map((entry: any) => ({
-				url: entry.url,
-				name: entry.name,
-				description: entry.description,
-				location_name: entry.location_name,
-				communities_count: entry.communities_count || 0,
-			}));
+			return (await res.json()).map(toServer);
 		})
 	);
 
@@ -141,73 +113,53 @@ export async function discoverAllServers(): Promise<NearbyServer[]> {
 	return allServers;
 }
 
-export async function fetchFromServers(servers: NearbyServer[], searchCenter?: { lat: number; lon: number; radiusKm: number }): Promise<DiscoveryResult> {
+/**
+ * One request per server now. A3.1 made posts a flat, server-wide collection, so there is no
+ * community index to walk first and no per-community fan-out — `GET /api/posts` is the whole
+ * feed of a server.
+ *
+ * `searchCenter` used to filter on the community's location, the only coordinate the old model
+ * had. Posts carry their own, so the radius is applied to the post: a post without coordinates
+ * falls back to the server's advertised location, and is kept if neither is known rather than
+ * silently dropped.
+ */
+export async function fetchFromServers(
+	servers: NearbyServer[],
+	searchCenter?: { lat: number; lon: number; radiusKm: number }
+): Promise<DiscoveryResult> {
 	const allPosts: AggregatedPost[] = [];
-	const allCommunities: DiscoveredCommunity[] = [];
 
 	const results = await Promise.allSettled(
 		servers.map(async (server) => {
-			const commRes = await fetch(`${server.url}/api/communities`);
-			if (!commRes.ok) return { posts: [], communities: [] };
+			const res = await fetch(`${server.url}/api/posts`);
+			if (!res.ok) return [];
 
-			const communities: any[] = await commRes.json();
-			const posts: AggregatedPost[] = [];
-			const comms: DiscoveredCommunity[] = [];
+			const posts: any[] = await res.json();
+			const kept: AggregatedPost[] = [];
 
-			const toFetch: { slug: string; name: string; description?: string }[] = [];
-			for (const c of communities.slice(0, 5)) {
-				if (searchCenter && c.location_lat != null && c.location_lon != null) {
-					const dist = haversineKm(searchCenter.lat, searchCenter.lon, c.location_lat, c.location_lon);
-					if (dist > searchCenter.radiusKm) continue;
-				}
-				toFetch.push({ slug: c.slug, name: c.name, description: c.description });
-			}
-
-			if (server.matched_community) {
-				const mc = server.matched_community;
-				if (!toFetch.some((c) => c.slug === mc.slug)) {
-					toFetch.push({ slug: mc.slug, name: mc.name });
-				}
-			}
-
-			for (const comm of toFetch) {
-				if (!comms.some((c) => c.slug === comm.slug)) {
-					comms.push({
-						slug: comm.slug,
-						name: comm.name,
-						description: comm.description,
-						server_url: server.url,
-						server_name: server.name,
-					});
-				}
-
-				try {
-					const postsRes = await fetch(`${server.url}/api/communities/${comm.slug}/posts`);
-					if (!postsRes.ok) continue;
-					const communityPosts: any[] = await postsRes.json();
-
-					for (const p of communityPosts.slice(0, 10)) {
-						posts.push({
-							...p,
-							server_url: server.url,
-							server_name: server.name,
-							server_location: server.location_name,
-							community_slug: comm.slug,
-							community_name: comm.name,
-						});
+			for (const p of posts) {
+				if (searchCenter) {
+					const lat = p.location_lat ?? server.location_lat;
+					const lon = p.location_lon ?? server.location_lon;
+					if (lat != null && lon != null) {
+						if (haversineKm(searchCenter.lat, searchCenter.lon, lat, lon) > searchCenter.radiusKm) continue;
 					}
-				} catch { /* skip */ }
+				}
+				kept.push({
+					...p,
+					server_url: server.url,
+					server_name: server.name,
+					server_location: server.location_name,
+				});
+				if (kept.length >= 50) break;
 			}
 
-			return { posts, communities: comms };
+			return kept;
 		})
 	);
 
 	for (const result of results) {
-		if (result.status === 'fulfilled') {
-			allPosts.push(...result.value.posts);
-			allCommunities.push(...result.value.communities);
-		}
+		if (result.status === 'fulfilled') allPosts.push(...result.value);
 	}
 
 	allPosts.sort((a, b) => {
@@ -218,5 +170,5 @@ export async function fetchFromServers(servers: NearbyServer[], searchCenter?: {
 		return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
 	});
 
-	return { servers, communities: allCommunities, posts: allPosts };
+	return { servers, posts: allPosts };
 }

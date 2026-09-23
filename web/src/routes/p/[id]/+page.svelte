@@ -2,41 +2,39 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
-	import { getActiveServer, resolveSlug } from '$lib/stores/server';
+	import { getActiveServer } from '$lib/stores/server';
+	import { auth } from '$lib/stores/auth';
 	import LinkPreview from '$lib/components/LinkPreview.svelte';
+	import RespondModal from '$lib/components/RespondModal.svelte';
+	import type { PostLike } from '$lib/api/types';
 
-	interface Post {
-		id: string;
-		kind: string;
-		category: string;
-		title: string;
-		body?: string;
-		location_name?: string;
-		urgency?: string;
-		status?: string;
-		author_id: string;
-		images?: string[];
-		contact_method?: string;
-		created_at: string;
-	}
-
-	let post: Post | null = $state(null);
-	let communityName = $state('');
+	/**
+	 * A6.1: the permalink for a post. The old form nested the post under a community segment
+	 * and had to resolve that community first; A3 made posts a flat, server-wide collection,
+	 * so the id alone addresses one.
+	 */
+	let post = $state<PostLike | null>(null);
 	let error = $state('');
 	let loading = $state(true);
+	let showModal = $state(false);
+
+	const kindLabels: Record<string, string> = {
+		resource: 'Resource', need: 'Need', offer: 'Offer', listing: 'Listing', want: 'Want'
+	};
 
 	const urls: string[] = $derived(post?.body
-		? [...post.body.matchAll(/https?:\/\/[^\s<>"]+/g)].map(m => m[0].replace(/[.,;:!?)]+$/, ''))
+		? [...post.body.matchAll(/https?:\/\/[^\s<>"]+/g)].map((m) => m[0].replace(/[.,;:!?)]+$/, ''))
 		: []);
 
+	let myUserId = $derived((() => {
+		const server = getActiveServer();
+		if (!server) return null;
+		return $auth.servers?.[server]?.userId || null;
+	})());
+
 	onMount(async () => {
-		const rawSlug = $page.params.slug as string;
-		const rawId = $page.params.id as string;
 		try {
-			const { localSlug } = await resolveSlug(rawSlug);
-			const community = await api.communities.get(localSlug);
-			communityName = community.name;
-			post = await api.posts.get(localSlug, rawId);
+			post = await api.posts.get($page.params.id as string);
 		} catch (e: any) {
 			error = e.message || 'Post not found';
 		}
@@ -67,11 +65,11 @@
 	{:else if error}
 		<p class="status error">{error}</p>
 	{:else if post}
-		<a href="/c/{$page.params.slug}" class="back">&larr; {communityName}</a>
+		<a href="/aid" class="back">&larr; All aid</a>
 
 		<article class="post-detail">
 			<div class="meta">
-				<span class="kind kind-{post.kind}">{post.kind}</span>
+				<span class="kind kind-{post.kind}">{kindLabels[post.kind] || post.kind}</span>
 				<span class="category">{post.category}</span>
 				{#if post.urgency}
 					<span class="urgency">{post.urgency}</span>
@@ -104,9 +102,22 @@
 					{/each}
 				</div>
 			{/if}
+
+			{#if post.status === 'active' && post.author_id && post.author_id !== myUserId}
+				<button class="btn-primary respond-btn" onclick={() => showModal = true}>
+					{#if post.kind === 'need'}I can help{:else if post.kind === 'offer'}Request this{:else}Respond{/if}
+				</button>
+			{/if}
 		</article>
 	{/if}
 </div>
+
+{#if showModal && post}
+	<RespondModal
+		post={{ id: post.id, title: post.title, kind: post.kind, server_url: post.server_url || getActiveServer() || '', author_id: post.author_id }}
+		onClose={() => showModal = false}
+	/>
+{/if}
 
 <style>
 	.container { max-width: 640px; margin: 0 auto; padding: 2rem 1rem; }
@@ -126,6 +137,7 @@
 	.contact { color: var(--text-muted); font-size: var(--text-sm); margin-bottom: var(--space-2); }
 	.images { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: var(--space-3); }
 	.images img { max-width: 100%; max-height: 400px; border-radius: var(--radius-md); border: 1px solid var(--border); }
+	.respond-btn { margin-top: var(--space-4); background: var(--accent); color: var(--text-on-accent); padding: var(--space-2) var(--space-4); border-radius: var(--radius-full); font-weight: 600; }
 	.status { text-align: center; color: var(--text-muted); padding: 3rem 0; }
 	.error { color: var(--critical); }
 </style>
