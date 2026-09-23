@@ -11,6 +11,8 @@ struct NodeInfo {
     domain: Option<String>,
     location: Option<NodeLocation>,
     listed: bool,
+    /// The resolved `[discovery] open_registration`: explicit value, else `[registration] mode`.
+    open_registration: bool,
 }
 
 #[derive(Serialize)]
@@ -54,5 +56,6 @@ async fn get_node_info(State(state): State<AppState>) -> Json<NodeInfo> {
         domain,
         location,
         listed: config.discovery.listed,
+        open_registration: config.open_registration(),
     })
 }

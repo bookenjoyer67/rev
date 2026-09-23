@@ -21,11 +21,10 @@ static REGISTRATIONS: LazyLock<TokioMutex<Vec<StdInstant>>> =
     LazyLock::new(|| TokioMutex::new(Vec::new()));
 
 pub fn router(state: AppState) -> Router {
-    // A3.2 (hub item 6): the gate is `[registration] mode` from the live config. It used to be
-    // `discovery.registration_mode`, a second copy of the same word that A2a's `[registration]`
-    // section superseded. `open` leaves the route public; `invite` and `closed` both put it
-    // behind `require_auth`, which is exactly the binary the old code had.
-    let registration_is_open = state.config.registration.mode == "open";
+    // B5: the gate is the resolved `open_registration`, not `[registration] mode` directly. An
+    // operator may sign users up by invite only and still accept peer registrations into the
+    // directory by setting `open_registration = true`; unset falls back to the signup mode.
+    let registration_is_open = state.config.open_registration();
 
     let mut public = Router::new()
         .route("/directory", get(list_servers));
@@ -62,6 +61,10 @@ pub struct RegisterRequest {
     location_lat: Option<f64>,
     location_lon: Option<f64>,
     version: Option<String>,
+    /// Peers advertise whether they accept open registrations. Older peers omit it
+    /// (`#[serde(default)]`), and are treated as openly registerable.
+    #[serde(default)]
+    open_registration: Option<bool>,
 }
 
 #[derive(Serialize, FromRow)]
@@ -73,6 +76,7 @@ pub struct DirectoryEntry {
     pub location_lat: Option<f64>,
     pub location_lon: Option<f64>,
     pub version: Option<String>,
+    pub open_registration: bool,
     pub last_seen: DateTime<Utc>,
     pub registered_at: DateTime<Utc>,
 }
@@ -94,7 +98,7 @@ pub struct SearchParams {
 
 /// Columns of `directory_entries`, written once so the three queries below cannot drift.
 const ENTRY_COLUMNS: &str =
-    "url, name, description, location_name, location_lat, location_lon, version, last_seen, registered_at";
+    "url, name, description, location_name, location_lat, location_lon, version, open_registration, last_seen, registered_at";
 
 /// Great-circle distance in km from `$1`/`$2` to a row's `location_lat`/`location_lon`.
 const DISTANCE_KM: &str = r#"(6371 * acos(
@@ -127,8 +131,8 @@ async fn register_server(
     // A3.2: `communities_count` and `community_locations` are not columns of the squashed
     // `directory_entries`. A server registering itself advertises one location, its own.
     sqlx::query(
-        r#"INSERT INTO directory_entries (url, name, description, location_name, location_lat, location_lon, version, last_seen)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+        r#"INSERT INTO directory_entries (url, name, description, location_name, location_lat, location_lon, version, open_registration, last_seen)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
            ON CONFLICT (url) DO UPDATE SET
              name = EXCLUDED.name,
              description = EXCLUDED.description,
@@ -136,6 +140,7 @@ async fn register_server(
              location_lat = EXCLUDED.location_lat,
              location_lon = EXCLUDED.location_lon,
              version = EXCLUDED.version,
+             open_registration = EXCLUDED.open_registration,
              last_seen = now()"#,
     )
     .bind(&url)
@@ -145,6 +150,8 @@ async fn register_server(
     .bind(input.location_lat)
     .bind(input.location_lon)
     .bind(&input.version)
+    // Old peers omit the field; the column default and our fallback agree: openly registerable.
+    .bind(input.open_registration.unwrap_or(true))
     .execute(&state.pool)
     .await?;
 
@@ -230,6 +237,7 @@ struct DirectoryEntryWithDist {
     location_lat: Option<f64>,
     location_lon: Option<f64>,
     version: Option<String>,
+    open_registration: bool,
     last_seen: DateTime<Utc>,
     registered_at: DateTime<Utc>,
     distance_km: Option<f64>,
@@ -246,6 +254,7 @@ impl From<DirectoryEntryWithDist> for DirectoryEntryWithDistance {
                 location_lat: r.location_lat,
                 location_lon: r.location_lon,
                 version: r.version,
+                open_registration: r.open_registration,
                 last_seen: r.last_seen,
                 registered_at: r.registered_at,
             },

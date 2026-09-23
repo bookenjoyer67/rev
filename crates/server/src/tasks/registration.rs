@@ -25,6 +25,7 @@ async fn register_with_directory(state: &AppState) -> anyhow::Result<()> {
         "location_lat": config.node.location_lat,
         "location_lon": config.node.location_lon,
         "version": env!("CARGO_PKG_VERSION"),
+        "open_registration": config.open_registration(),
     });
 
     let client = reqwest::Client::new();

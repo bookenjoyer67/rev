@@ -49,6 +49,10 @@ pub struct DiscoveryConfig {
     pub listed: bool,
     pub directory_url: Option<String>,
     pub directory_enabled: bool,
+    /// Whether this server advertises itself as openly registerable, and whether it accepts
+    /// peer registrations into its directory. Deliberately SEPARATE from `[registration] mode`,
+    /// which governs user signup only.
+    pub open_registration: Option<bool>,
 }
 
 /// A2a: the signing-key setting is gone with the JWTs. Sessions are opaque database rows, so
@@ -281,6 +285,14 @@ impl Config {
         }
 
         Ok(())
+    }
+
+    /// Resolve `[discovery] open_registration`: an explicit value wins, otherwise fall back to
+    /// `[registration] mode == "open"`, so every existing config keeps its current behaviour.
+    pub fn open_registration(&self) -> bool {
+        self.discovery
+            .open_registration
+            .unwrap_or(self.registration.mode == "open")
     }
 
     fn apply_env_overrides(&mut self) {

@@ -30,6 +30,9 @@ listed = false
 # directory_url = "https://komun.buzz"
 # Whether THIS server acts as a directory for other servers
 directory_enabled = false
+# Whether this server advertises itself as openly registerable, and whether it accepts peer
+# registrations into its directory. Leave it out to follow `[registration] mode`.
+# open_registration = true
 # Registration mode: "open" (any server can register) or "approval" (admin must approve)
 registration_mode = "open"
 
