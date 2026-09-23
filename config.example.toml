@@ -1,88 +1,106 @@
 # Komun node configuration
-# Copy this file to config.toml and edit for your community.
-# Environment variables override values in this file.
+# Copy this file to config.toml and edit it for your deployment.
+# Environment variables override values in this file (see docs/DEVELOPMENT.md).
 
 [server]
-# Address and port to listen on
+# Address and port the HTTP server listens on.
 bind_address = "0.0.0.0"
 port = 3000
 
 [database]
-# PostgreSQL connection string
+# PostgreSQL connection string.
 url = "postgres://komun:komun@localhost:5432/komun"
-# Connection pool size
+# Maximum size of the connection pool.
 max_connections = 20
 
 [node]
-# Your community's identity — this is how other nodes and users see you
+# This server's identity — how users and the public directory see it.
 name = "My Community"
 description = "Mutual aid for our neighborhood"
-# Location helps people find your server in the directory
+# Public base URL of this node. Used for emailed links and the advertised domain.
+# public_url = "https://komun.example.org"
+# Optional location, shown in the directory and used as the default map centre.
 # location_name = "East Oakland, CA"
 # location_lat = 37.77
 # location_lon = -122.22
 
 [discovery]
-# Whether this node appears in the public directory
-# Set to true if you want people to find you
+# Whether this server appears in the public server directory.
 listed = false
-# Directory service URL (where to register)
+# Directory service to register with. Only needed when `listed = true`.
 # directory_url = "https://komun.buzz"
-# Whether THIS server acts as a directory for other servers
+# Whether THIS server acts as a directory for other servers. When false the
+# `/api/directory*` routes are not mounted at all and therefore return 404.
 directory_enabled = false
-# Whether this server advertises itself as openly registerable, and whether it accepts peer
-# registrations into its directory. Leave it out to follow `[registration] mode`.
+# Whether this server advertises itself as openly registerable, and whether it
+# accepts peer registrations into its directory. An explicit value wins; when
+# omitted it follows `[registration] mode` (open => advertised). It is
+# deliberately separate from user signup: a server may be invite-only for users
+# and still accept peers.
 # open_registration = true
-# Registration mode: "open" (any server can register) or "approval" (admin must approve)
-registration_mode = "open"
 
 [auth]
-# Secret for signing tokens — CHANGE THIS to something random
-# Generate one with: openssl rand -base64 32
-jwt_secret = "CHANGE-ME-generate-a-random-string-here"
-# How long login sessions last (days)
+# How long a login session stays valid without being renewed, in days.
 token_lifetime_days = 30
-# Spam prevention: max new registrations per hour
+# Spam limit: maximum new account registrations per hour.
 max_registrations_per_hour = 20
 
-[federation]
-# Whether this node participates in federation with other nodes
-enabled = false
-# Your public domain — required for federation
-# This is how other nodes address you
-# domain = "aid.mycommunity.org"
-# Maximum number of allied nodes
-# max_alliances = 50
-
 [security]
-# Rate limiting (per user)
+# Per-user hourly rate limits.
 max_posts_per_hour = 60
 max_messages_per_hour = 200
 max_matches_per_hour = 30
-# CORS allowed origins ("*" = any Komun frontend can connect)
+# CORS allowed origins; "*" allows any origin.
 allowed_origins = "*"
-
-[relay]
-# piggPin map relay — enables community maps
-enabled = false
-# Port for the WebSocket relay (separate from the API port)
-port = 9001
-bind_address = "0.0.0.0"
-# Where to persist encrypted map data
-storage_path = "data/relay"
-# Maximum connected peers per map room
-max_clients_per_room = 100
-# Public WebSocket URL that clients/browsers use to reach the relay
-# Only needed if the relay runs on a different host than the API server
-# external_url = "wss://piggpin.mydomain.com"
+# Reverse proxies whose X-Forwarded-For header may be believed, as IP literals.
+# Leave empty unless this server runs behind a trusted proxy: an unlisted peer's
+# header is ignored entirely, which is the safe default.
+# trusted_proxies = ["127.0.0.1"]
 
 [posts]
-# Default time-to-live for posts by kind (days, 0 = never expires)
+# Default time-to-live for posts of each kind, in days (0 = never expires).
 default_ttl_need_days = 7
 default_ttl_offer_days = 14
 default_ttl_resource_days = 0
 
 [admin]
-# Base64-encoded public keys of superadmins
-# Use CLI to promote users: komun-server admin add-superadmin <pubkey>
-# superadmin_keys = ["base64key1", "base64key2"]
+# Public keys of the initial superadmins, if any. Prefer promoting users with the
+# CLI instead: komun-server admin add-superadmin <pubkey>
+# superadmin_keys = []
+
+[media]
+# Where uploaded media is stored, and the size/count limits enforced on it.
+avatar_dir = "data/avatars"
+max_avatar_bytes = 1048576
+post_images_dir = "data/post-images"
+max_post_image_bytes = 5242880
+max_post_images = 5
+
+[email]
+# SMTP used for address-verification and password-reset mail. Required only when
+# `[registration] require_email_verification = true`: the server refuses to
+# start if verification is on and this section has no `smtp_host` and `from`.
+# Leave the section empty (as shipped) to run without mail.
+# smtp_host = "smtp.example.org"
+# smtp_port = 587          # defaults to 587 when omitted
+# username = "komun@example.org"
+# password = "change-me"
+# from = "Komun <noreply@example.org>"
+# starttls = true          # defaults to false
+# public_url = "https://komun.example.org"   # link base; falls back to [node] public_url
+
+[registration]
+# Who may create an account: "open", "invite" or "closed".
+mode = "open"
+# Require users to confirm their email address before they can post. Set to
+# `false` to run without SMTP; set it to `true` only when [email] `smtp_host`
+# and `from` are configured, or the server refuses to start.
+require_email_verification = false
+# Minimum accepted password length.
+min_password_length = 12
+
+[geocode]
+# Contact (email or URL) for this deployment, sent to Nominatim in the
+# User-Agent header. Nominatim's usage policy requires a real contact, and
+# requests may be blocked without one.
+# contact = "admin@example.org"
