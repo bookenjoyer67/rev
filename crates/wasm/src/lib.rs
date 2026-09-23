@@ -3,68 +3,17 @@ use chacha20poly1305::{
     aead::{Aead, KeyInit},
     XChaCha20Poly1305, XNonce,
 };
-use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Verifier, Signature};
 use rand::rngs::OsRng;
 use rand_core::RngCore;
 use sha2::{Sha256, Digest};
 use wasm_bindgen::prelude::*;
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey, StaticSecret};
 
-#[wasm_bindgen]
-pub struct KeyPair {
-    signing_key: Vec<u8>,
-    verifying_key: Vec<u8>,
-}
-
-#[wasm_bindgen]
-impl KeyPair {
-    #[wasm_bindgen(getter)]
-    pub fn secret_key(&self) -> Vec<u8> {
-        self.signing_key.clone()
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn public_key(&self) -> Vec<u8> {
-        self.verifying_key.clone()
-    }
-}
-
-#[wasm_bindgen]
-pub fn generate_keypair() -> KeyPair {
-    let signing_key = SigningKey::generate(&mut OsRng);
-    let verifying_key = signing_key.verifying_key();
-
-    KeyPair {
-        signing_key: signing_key.to_bytes().to_vec(),
-        verifying_key: verifying_key.to_bytes().to_vec(),
-    }
-}
-
-#[wasm_bindgen]
-pub fn sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let key_bytes: [u8; 32] = secret_key
-        .try_into()
-        .map_err(|_| JsValue::from_str("invalid secret key length"))?;
-    let signing_key = SigningKey::from_bytes(&key_bytes);
-    let signature = signing_key.sign(message);
-    Ok(signature.to_bytes().to_vec())
-}
-
-#[wasm_bindgen]
-pub fn verify(message: &[u8], signature_bytes: &[u8], public_key: &[u8]) -> Result<bool, JsValue> {
-    let key_bytes: [u8; 32] = public_key
-        .try_into()
-        .map_err(|_| JsValue::from_str("invalid public key length"))?;
-    let sig_bytes: [u8; 64] = signature_bytes
-        .try_into()
-        .map_err(|_| JsValue::from_str("invalid signature length"))?;
-
-    let verifying_key = VerifyingKey::from_bytes(&key_bytes)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let signature = Signature::from_bytes(&sig_bytes);
-
-    Ok(verifying_key.verify(message, &signature).is_ok())
-}
+// A2.10: the signature keypair, `generate_keypair`, `sign` and `verify` are deleted along with the
+// registration challenge that was their only caller. A signature from a key the browser minted
+// seconds earlier proved nothing an unauthenticated POST did not already prove, and it forced every
+// account to carry a second long-lived secret whose compromise was never modelled. Identity is now
+// the password; the only key material left is the x25519 secret used to read messages.
 
 #[wasm_bindgen]
 pub struct X25519KeyPair {
@@ -239,22 +188,35 @@ pub fn generate_salt() -> Vec<u8> {
     salt
 }
 
+/// Argon2id over the account password, used for both halves of Part 1.5's split: the *verifier*
+/// that is sent to the server, and the *wrap key* that never leaves the browser. Which one comes
+/// out is decided entirely by the salt the caller passes in.
+///
+/// A2.11 renamed this from `derive_key_from_passphrase`. There is no separate passphrase any more —
+/// the user types one password, and asking them for a second secret to unlock their own key was
+/// the reason the old flow needed an unlock prompt on every login.
 #[wasm_bindgen]
-pub fn derive_key_from_passphrase(passphrase: &[u8], salt: &[u8]) -> Result<Vec<u8>, JsValue> {
+pub fn derive_key_from_password(password: &[u8], salt: &[u8]) -> Result<Vec<u8>, JsValue> {
     let params = Params::new(4096, 3, 1, Some(32))
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
     let mut key = vec![0u8; 32];
-    argon2.hash_password_into(passphrase, salt, &mut key)
+    argon2.hash_password_into(password, salt, &mut key)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     Ok(key)
 }
 
+/// Wrap the account's single secret — the x25519 message key — under a key derived from the
+/// password or from the recovery code.
+///
+/// A2.10: this used to concatenate two secrets and wrap 64 bytes. The signature half no longer
+/// exists, so the bundle is exactly the 32-byte x25519 secret. Taking one slice rather than two
+/// also removes the only reason a caller had to know the layout, which is what the old
+/// `bytes.slice(0, 32)` unwrap on the JS side was getting wrong.
 #[wasm_bindgen]
 pub fn encrypt_key_bundle(
-    ed25519_secret: &[u8],
     x25519_secret: &[u8],
     derived_key: &[u8],
 ) -> Result<Vec<u8>, JsValue> {
@@ -262,9 +224,10 @@ pub fn encrypt_key_bundle(
         .try_into()
         .map_err(|_| JsValue::from_str("invalid derived key length"))?;
 
-    let mut plaintext = Vec::with_capacity(64);
-    plaintext.extend_from_slice(ed25519_secret);
-    plaintext.extend_from_slice(x25519_secret);
+    if x25519_secret.len() != 32 {
+        return Err(JsValue::from_str("invalid secret key length"));
+    }
+    let plaintext = x25519_secret;
 
     let cipher = XChaCha20Poly1305::new_from_slice(&key_bytes)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -274,7 +237,7 @@ pub fn encrypt_key_bundle(
     let nonce = XNonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher
-        .encrypt(nonce, plaintext.as_slice())
+        .encrypt(nonce, plaintext)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     let mut result = Vec::with_capacity(24 + ciphertext.len());
@@ -283,6 +246,12 @@ pub fn encrypt_key_bundle(
     Ok(result)
 }
 
+/// Unwrap a bundle written by `encrypt_key_bundle`, returning the 32-byte x25519 secret.
+///
+/// The length is asserted rather than assumed. AEAD tells us the plaintext is authentic, not that
+/// it is the shape this version expects: a bundle written by the two-secret format would decrypt
+/// cleanly and hand back 64 bytes, and a caller that then used the first 32 would be holding the
+/// wrong key and getting silent decryption failures for every message.
 #[wasm_bindgen]
 pub fn decrypt_key_bundle(
     encrypted: &[u8],
@@ -302,9 +271,15 @@ pub fn decrypt_key_bundle(
     let cipher = XChaCha20Poly1305::new_from_slice(&key_bytes)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-    cipher
+    let secret = cipher
         .decrypt(nonce, ciphertext)
-        .map_err(|_| JsValue::from_str("wrong passphrase or corrupted bundle"))
+        .map_err(|_| JsValue::from_str("wrong password or corrupted bundle"))?;
+
+    if secret.len() != 32 {
+        return Err(JsValue::from_str("unexpected key bundle length"));
+    }
+
+    Ok(secret)
 }
 
 // The recovery-lookup helper is deleted (A2a / SPEC F1). It derived Argon2id(passphrase,
@@ -2372,14 +2347,13 @@ pub fn generate_recovery_code() -> String {
     indices.iter().map(|&i| BIP39_WORDS[i]).collect::<Vec<_>>().join(" ")
 }
 
-#[wasm_bindgen]
-pub fn hash_recovery_code(phrase: &str) -> Result<Vec<u8>, JsValue> {
-    let params = Params::new(4096, 3, 1, Some(32))
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let salt = b"komun-recovery-code-v1";
-    let mut hash = vec![0u8; 32];
-    argon2.hash_password_into(phrase.as_bytes(), salt, &mut hash)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-    Ok(hash)
-}
+// A2.10: `hash_recovery_code` is deleted. It ran Argon2id over the phrase under the hardcoded
+// salt `komun-recovery-code-v1` and handed the digest to the server, which stored it as
+// `users.recovery_code_hash` — a column the squashed schema no longer has. Two things were wrong
+// with it: the server held a verifier for the very secret that is supposed to make the server
+// irrelevant, and a salt baked into the WASM is the same on every deployment, so one precomputed
+// table would have covered all of them at once.
+//
+// The recovery code now derives a wrapping key exactly the way the password does — through
+// `derive_key_from_password`, under the account's own `recovery_bundle_salt` — and that key wraps
+// a second copy of the x25519 secret. Nothing derived from the code is ever transmitted.

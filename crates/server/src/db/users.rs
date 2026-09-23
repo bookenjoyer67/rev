@@ -7,15 +7,8 @@ pub struct UserProfileRow {
     pub display_name: String,
     pub bio: Option<String>,
     pub avatar_path: Option<String>,
-    /// A2a: `users.public_key` (the ed25519 identity key) went with the challenge-response
-    /// scheme. The field survives only because `api/users.rs` still serialises it and that file
-    /// belongs to A3; it is now an alias of `encryption_public_key`, empty when unset.
-    pub public_key: Vec<u8>,
     pub encryption_public_key: Option<Vec<u8>>,
     pub role: String,
-    /// A1 dropped the `members` table with the rest of multi-tenancy. Always 0 until A3 removes
-    /// the field from the response.
-    pub community_count: i64,
     pub post_count: i64,
     pub verified_post_count: i64,
     pub endorsement_count: i64,
@@ -27,13 +20,14 @@ pub struct UserProfileRow {
 pub async fn get_profile(pool: &PgPool, user_id: Uuid) -> Result<Option<UserProfileRow>, sqlx::Error> {
     // A2a: the previous version joined LATERAL against `members` and selected `u.public_key`,
     // both of which A1 dropped — so every call failed at runtime with an undefined-column error.
+    // A3.2 removes the two stand-ins A2a left behind: `public_key` (an alias of
+    // `encryption_public_key`, kept only so the response shape did not change mid-flight) and
+    // `community_count` (a literal 0 standing in for the dropped `members` table).
     sqlx::query_as::<_, UserProfileRow>(
         r#"SELECT
             u.id, u.display_name, u.bio, u.avatar_path,
-            COALESCE(u.encryption_public_key, ''::bytea) as public_key,
             u.encryption_public_key,
             u.role, u.created_at, u.last_seen, u.profile_json,
-            0::bigint as community_count,
             COALESCE(p.post_count, 0) as post_count,
             COALESCE(v.verified_count, 0) as verified_post_count,
             COALESCE(e.endorsement_count, 0) as endorsement_count

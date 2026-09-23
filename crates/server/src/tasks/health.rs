@@ -29,10 +29,9 @@ async fn check_registered_servers(state: &AppState) -> anyhow::Result<()> {
             Ok(res) if res.status().is_success() => {
                 if let Ok(info) = res.json::<serde_json::Value>().await {
                     sqlx::query(
-                        "UPDATE directory_entries SET last_seen = now(), communities_count = $2, name = $3 WHERE url = $1"
+                        "UPDATE directory_entries SET last_seen = now(), name = $2 WHERE url = $1"
                     )
                     .bind(&url)
-                    .bind(info["communities_count"].as_i64().unwrap_or(0))
                     .bind(info["name"].as_str().unwrap_or(""))
                     .execute(&state.pool)
                     .await

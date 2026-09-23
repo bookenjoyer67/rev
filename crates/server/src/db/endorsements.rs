@@ -56,9 +56,6 @@ pub async fn list_for_user(pool: &PgPool, endorsee_id: Uuid) -> Result<Vec<Endor
     .await
 }
 
-pub async fn count_for_user(pool: &PgPool, endorsee_id: Uuid) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar("SELECT COUNT(*) FROM endorsements WHERE endorsee_id = $1")
-        .bind(endorsee_id)
-        .fetch_one(pool)
-        .await
-}
+// A3: `count_for_user` had no callers. Both places that want the number — `api/users.rs`'s
+// profile query and `api/search.rs`'s user search — count it in SQL alongside the row they are
+// already fetching, rather than making a second round trip.

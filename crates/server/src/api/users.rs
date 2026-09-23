@@ -32,10 +32,10 @@ async fn profile(
         "display_name": row.display_name,
         "bio": row.bio,
         "avatar_url": row.avatar_path.map(|p| format!("/avatars/{}", p)),
-        "public_key": auth::encode_b64(&row.public_key),
+        // A3.2 (hub item 4): `public_key` and `community_count` were columns the squashed schema
+        // dropped. There is one key now, and it is the encryption key.
         "encryption_public_key": row.encryption_public_key.map(|k| auth::encode_b64(&k)),
         "role": row.role,
-        "community_count": row.community_count,
         "post_count": row.post_count,
         "verified_post_count": row.verified_post_count,
         "endorsement_count": row.endorsement_count,

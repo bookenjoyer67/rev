@@ -10,7 +10,6 @@ struct NodeInfo {
     version: String,
     domain: Option<String>,
     location: Option<NodeLocation>,
-    communities_count: i64,
     listed: bool,
     federation_enabled: bool,
 }
@@ -29,11 +28,6 @@ pub fn router(state: AppState) -> Router {
 }
 
 async fn get_node_info(State(state): State<AppState>) -> Json<NodeInfo> {
-    let communities_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM communities")
-        .fetch_one(&state.pool)
-        .await
-        .unwrap_or(0);
-
     let config = &state.config;
     let location = if config.node.location_name.is_some()
         || config.node.location_lat.is_some()
@@ -61,7 +55,6 @@ async fn get_node_info(State(state): State<AppState>) -> Json<NodeInfo> {
         version: env!("CARGO_PKG_VERSION").to_string(),
         domain,
         location,
-        communities_count,
         listed: config.discovery.listed,
         federation_enabled: config.federation.enabled,
     })

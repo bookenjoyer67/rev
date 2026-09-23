@@ -92,7 +92,7 @@ async fn list_endorsements(
 
 fn is_unique_violation(e: &sqlx::Error) -> bool {
     if let sqlx::Error::Database(db) = e {
-        db.code().map_or(false, |c| c == "23505")
+        db.code().is_some_and(|c| c == "23505")
     } else {
         false
     }

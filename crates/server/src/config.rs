@@ -43,13 +43,12 @@ pub struct NodeConfig {
     pub location_lon: Option<f64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct DiscoveryConfig {
     pub listed: bool,
     pub directory_url: Option<String>,
     pub directory_enabled: bool,
-    pub registration_mode: String,
 }
 
 /// A2a: the signing-key setting is gone with the JWTs. Sessions are opaque database rows, so
@@ -189,8 +188,6 @@ pub struct MediaConfig {
     pub post_images_dir: String,
     pub max_post_image_bytes: u64,
     pub max_post_images: u32,
-    pub community_images_dir: String,
-    pub max_community_image_bytes: u64,
 }
 
 impl Default for MediaConfig {
@@ -201,8 +198,6 @@ impl Default for MediaConfig {
             post_images_dir: "data/post-images".into(),
             max_post_image_bytes: 5_242_880,
             max_post_images: 5,
-            community_images_dir: "data/community-images".into(),
-            max_community_image_bytes: 1_048_576,
         }
     }
 }
@@ -234,17 +229,6 @@ impl Default for NodeConfig {
             location_name: None,
             location_lat: None,
             location_lon: None,
-        }
-    }
-}
-
-impl Default for DiscoveryConfig {
-    fn default() -> Self {
-        Self {
-            listed: false,
-            directory_url: None,
-            directory_enabled: false,
-            registration_mode: "open".into(),
         }
     }
 }

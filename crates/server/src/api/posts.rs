@@ -1,3 +1,10 @@
+//! `/api/posts` — the flat post collection.
+//!
+//! A3.1: posts used to hang off a per-tenant path segment, and every handler began by resolving
+//! that segment to a row in a table the squashed schema no longer has. The path segment, the
+//! lookup and the membership/role checks that gated posting are all gone. `require_auth` is the
+//! only gate on the mutating half of this router.
+
 use axum::{
     extract::{Extension, Multipart, Path, Query, State},
     http::StatusCode,
@@ -9,11 +16,11 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use komun_core::models::{CreatePost, Post};
+use komun_core::models::{CreatePost, Post, PostStatus, Urgency};
 use crate::auth::{require_auth, AuthUser};
 use crate::AppState;
 
-use super::communities::StatusError;
+use super::StatusError;
 
 pub fn router(state: AppState) -> Router {
     let public = Router::new()
@@ -39,26 +46,30 @@ struct PostFilters {
 
 async fn list_posts(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
     Query(filters): Query<PostFilters>,
 ) -> Result<Json<Vec<Post>>, StatusError> {
-    let community = crate::db::communities::get_by_slug(&state.pool, &slug).await?;
-    let posts = crate::db::posts::list(&state.pool, community.id, filters.kind, filters.category, filters.status, filters.q).await?;
+    let posts = crate::db::posts::list(
+        &state.pool,
+        filters.kind,
+        filters.category,
+        filters.status,
+        filters.q,
+    )
+    .await?;
     Ok(Json(posts))
 }
 
 async fn get_post(
     State(state): State<AppState>,
-    Path((_slug, id)): Path<(String, uuid::Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> Result<Json<Post>, StatusError> {
-    let post = crate::db::posts::get(&state.pool, id).await?;
+    let post = load_post(&state, id).await?;
     Ok(Json(post))
 }
 
 async fn create_post(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
-    Path(slug): Path<String>,
     Json(input): Json<CreatePost>,
 ) -> Result<Json<Post>, StatusError> {
     let recent: i64 = sqlx::query_scalar(
@@ -70,59 +81,105 @@ async fn create_post(
     .unwrap_or(0);
 
     if recent >= state.config.security.max_posts_per_hour as i64 {
-        return Err(anyhow::anyhow!("rate limit: max {} posts per hour", state.config.security.max_posts_per_hour).into());
+        return Err(StatusError::with_status(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!(
+                "rate limit: max {} posts per hour",
+                state.config.security.max_posts_per_hour
+            ),
+        ));
     }
 
-    let community = crate::db::communities::get_by_slug(&state.pool, &slug).await?;
-    let post = crate::db::posts::create(&state.pool, community.id, auth.user_id, input).await?;
+    validate_market_fields(&input)?;
+
+    let post = crate::db::posts::create(&state.pool, auth.user_id, input).await?;
     Ok(Json(post))
+}
+
+/// The `chk_posts_market_fields` and `chk_posts_currency` constraints are the real authority on
+/// this; checking here turns a constraint violation (a 500, with the SQL in the log) into a 400
+/// that says what is wrong.
+fn validate_market_fields(input: &CreatePost) -> Result<(), StatusError> {
+    let bad_request =
+        |m: &str| StatusError::with_status(StatusCode::BAD_REQUEST, m.to_string());
+
+    if !input.kind.is_market()
+        && (input.market_listed
+            || input.price_cents.is_some()
+            || input.item_condition.is_some())
+    {
+        return Err(bad_request(
+            "price, condition and market_listed belong to 'listing' and 'want' posts only",
+        ));
+    }
+    if input.price_cents.is_some_and(|c| c < 0) {
+        return Err(bad_request("price_cents cannot be negative"));
+    }
+    if let Some(currency) = &input.currency {
+        if currency.len() != 3 || !currency.chars().all(|c| c.is_ascii_uppercase()) {
+            return Err(bad_request("currency must be a three-letter uppercase code"));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
 struct UpdatePostRequest {
     title: Option<String>,
     body: Option<String>,
-    urgency: Option<String>,
-    status: Option<String>,
+    /// Typed, so an unknown value is a 422 from serde rather than a CHECK violation at the
+    /// bottom of the stack.
+    urgency: Option<Urgency>,
+    status: Option<PostStatus>,
 }
 
 async fn update_post(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
-    Path((_slug, id)): Path<(String, uuid::Uuid)>,
+    Path(id): Path<Uuid>,
     Json(input): Json<UpdatePostRequest>,
 ) -> Result<Json<serde_json::Value>, StatusError> {
-    let post = crate::db::posts::get(&state.pool, id).await?;
+    let post = load_post(&state, id).await?;
     if post.author_id != auth.user_id {
         return Err(StatusError::with_status(StatusCode::FORBIDDEN, "not your post"));
     }
-    crate::db::posts::update(&state.pool, id, input.title, input.body, input.urgency, input.status).await?;
-    Ok(Json(serde_json::json!({"status": "updated"})))
+
+    // `hidden` and `flagged` are moderation states; an author setting either on their own post
+    // would either hide it from moderators' queues or fake a report outcome.
+    if matches!(input.status, Some(PostStatus::Hidden) | Some(PostStatus::Flagged)) {
+        return Err(StatusError::with_status(
+            StatusCode::FORBIDDEN,
+            "that status is set by moderators, not by the author",
+        ));
+    }
+
+    crate::db::posts::update(&state.pool, id, input.title, input.body, input.urgency, input.status)
+        .await?;
+    Ok(Json(json!({"status": "updated"})))
 }
 
 async fn withdraw_post(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
-    Path((_slug, id)): Path<(String, uuid::Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, StatusError> {
-    let post = crate::db::posts::get(&state.pool, id).await?;
+    let post = load_post(&state, id).await?;
     if post.author_id != auth.user_id {
         return Err(StatusError::with_status(StatusCode::FORBIDDEN, "not your post"));
-
     }
     crate::db::posts::withdraw(&state.pool, id).await?;
-    Ok(Json(serde_json::json!({"status": "withdrawn"})))
+    Ok(Json(json!({"status": "withdrawn"})))
 }
 
 async fn upload_images(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
-    Path((_slug, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>, StatusError> {
-    let post = crate::db::posts::get(&state.pool, id).await?;
+    let post = load_post(&state, id).await?;
     if post.author_id != auth.user_id {
-        return Err(anyhow::anyhow!("not your post").into());
+        return Err(StatusError::with_status(StatusCode::FORBIDDEN, "not your post"));
     }
 
     let current_count: i64 = sqlx::query_scalar(
@@ -152,7 +209,7 @@ async fn upload_images(
         }
 
         let img = image::load_from_memory(&data)
-            .map_err(|_| anyhow::anyhow!("invalid image"))?;
+            .map_err(|_| StatusError::with_status(StatusCode::BAD_REQUEST, "invalid image"))?;
         let img = if img.width() > 1920 || img.height() > 1920 {
             img.resize(1920, 1920, image::imageops::FilterType::Lanczos3)
         } else {
@@ -184,4 +241,12 @@ async fn upload_images(
         .collect();
 
     Ok(Json(json!({"images": urls})))
+}
+
+/// A missing post is a 404. The old code let `anyhow!("post not found")` fall through the
+/// blanket `From` impl and answered 500.
+async fn load_post(state: &AppState, id: Uuid) -> Result<Post, StatusError> {
+    crate::db::posts::get(&state.pool, id)
+        .await?
+        .ok_or_else(|| StatusError::with_status(StatusCode::NOT_FOUND, "post not found"))
 }

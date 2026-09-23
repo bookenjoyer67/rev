@@ -106,6 +106,7 @@ pub fn router(state: AppState) -> Router {
         .route("/verify", get(verify_email_link).post(verify_email))
         .route("/resend-verification", post(resend_verification))
         .route("/password-reset", post(request_password_reset))
+        .route("/password-reset/bundle", get(password_reset_bundle))
         .route("/password-reset/confirm", post(confirm_password_reset));
 
     let protected = Router::new()
@@ -115,6 +116,10 @@ pub fn router(state: AppState) -> Router {
         .route("/sessions", get(list_sessions).delete(revoke_other_sessions))
         .route("/sessions/{id}", axum::routing::delete(revoke_session))
         .route("/users/{id}/keys", get(get_user_keys))
+        // A2b.1. Both re-authenticate with the current verifier rather than trusting the session:
+        // a stolen bearer token must not be enough to take the account over permanently.
+        .route("/password/change", post(change_password))
+        .route("/recovery/reissue", post(reissue_recovery))
         // The /me routes deliberately use the plain session check rather than `require_auth`:
         // an unverified user must be able to see who they are and ask for another mail.
         .layer(middleware::from_fn_with_state(state.clone(), require_session));
@@ -233,6 +238,52 @@ pub struct PasswordResetConfirm {
     /// is recoverable, but old encrypted messages stay unreadable until the recovery code is used.
     encrypted_key_bundle: Option<String>,
     bundle_salt: Option<String>,
+    /// A2b: the three fields below exist for the reset-*without*-the-recovery-code path.
+    ///
+    /// Someone who has lost both their password and their recovery code cannot recover the old
+    /// x25519 secret — nobody can, which is the point. Their client generates a fresh keypair, and
+    /// the new *public* key has to reach the server or every correspondent would keep encrypting
+    /// to a secret the account no longer holds: the user would regain the account and still be
+    /// unable to read anything, including messages sent after the reset.
+    encryption_public_key: Option<String>,
+    encrypted_recovery_bundle: Option<String>,
+    recovery_bundle_salt: Option<String>,
+}
+
+/// `POST /auth/password/change` — a signed-in user changing a password they still know.
+///
+/// Distinct from the reset flow in the two ways that matter: it proves knowledge of the current
+/// password, and it keeps the x25519 secret. Only the wrapping changes, so every message the
+/// account could read before it can still read afterwards.
+#[derive(Deserialize)]
+pub struct PasswordChangeRequest {
+    /// `Argon2id(current password, current auth_salt)` — the same value `/auth/signin` takes.
+    current_verifier: String,
+    /// `Argon2id(new password, new auth_salt)`.
+    verifier: String,
+    auth_salt: String,
+    #[serde(default)]
+    password_length: usize,
+    /// The *same* x25519 secret, re-wrapped under the new password. Required when the account has
+    /// a bundle: changing the password without re-wrapping would strand the secret behind a key
+    /// nobody can derive any more.
+    encrypted_key_bundle: Option<String>,
+    bundle_salt: Option<String>,
+}
+
+/// `POST /auth/recovery/reissue` — mint a replacement 12-word recovery code.
+///
+/// The code itself is generated in the browser and never transmitted; what arrives here is the
+/// x25519 secret wrapped under a key derived from it. Writing the new wrapping over the old one is
+/// what invalidates the previous code — there is nothing else to revoke, because the server never
+/// held anything derived from it.
+#[derive(Deserialize)]
+pub struct RecoveryReissueRequest {
+    /// Re-authentication. A stolen session token must not be enough to overwrite the recovery
+    /// bundle with garbage and destroy the account's last way back in.
+    current_verifier: String,
+    encrypted_recovery_bundle: String,
+    recovery_bundle_salt: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +365,9 @@ fn decoy_salt(pepper: &[u8], email: &str) -> Vec<u8> {
     hasher.finalize()[..16].to_vec()
 }
 
-async fn record_audit(
+/// Append an `audit_events` row. `pub(crate)` because `api::admin` records role changes through
+/// the same path — one implementation means one place where the failure policy below is decided.
+pub(crate) async fn record_audit(
     pool: &sqlx::PgPool,
     actor: Option<Uuid>,
     action: &str,
@@ -888,6 +941,69 @@ async fn request_password_reset(
     })))
 }
 
+/// What the browser needs to turn a recovery code back into the account's x25519 secret.
+#[derive(Serialize)]
+pub struct RecoveryBundleResponse {
+    encrypted_recovery_bundle: Option<String>,
+    recovery_bundle_salt: Option<String>,
+}
+
+/// `GET /auth/password-reset/bundle?token=…`
+///
+/// Someone resetting a forgotten password has no session and no old password, so they cannot reach
+/// the wrapped secret through `/auth/signin`. Without this the "reset *with* the recovery code"
+/// path is impossible: the code derives a key, but the ciphertext that key opens only exists on the
+/// server. Handing it to the holder of a valid reset token costs nothing — that holder can already
+/// take the account, and the bundle is sealed by ~128 bits drawn from the word list, so having the
+/// ciphertext does not help them read anything.
+///
+/// The token is looked up, **not consumed**: the actual reset still needs it, and a client that
+/// crashes between the two calls must not be left with a dead link.
+async fn password_reset_bundle(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Query(q): Query<TokenQuery>,
+) -> Result<Json<RecoveryBundleResponse>, ApiError> {
+    let ip = limit_key(&state, peer, &headers);
+    enforce_limit(&state, RouteClass::PasswordReset, ip)?;
+
+    // Same predicate as `consume_one_time_token`, minus the write. It is spelled out here rather
+    // than added to `db::sessions` because A2b owns `auth/**` and not `db/**`.
+    let hash = sessions::hash_token(&q.token);
+    let user_id = sqlx::query_scalar::<_, Uuid>(
+        r#"SELECT user_id FROM one_time_tokens
+           WHERE token_hash = $1
+             AND kind = $2
+             AND used_at IS NULL
+             AND expires_at > now()"#,
+    )
+    .bind(&hash)
+    .bind(session_db::KIND_PASSWORD_RESET)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| internal("reset token lookup failed", e))?
+    .ok_or_else(|| {
+        fail(
+            StatusCode::BAD_REQUEST,
+            "this reset link is invalid, already used, or expired",
+        )
+    })?;
+
+    let row = sqlx::query_as::<_, (Option<Vec<u8>>, Option<Vec<u8>>)>(
+        "SELECT encrypted_recovery_bundle, recovery_bundle_salt FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| internal("recovery bundle lookup failed", e))?;
+
+    Ok(Json(RecoveryBundleResponse {
+        encrypted_recovery_bundle: row.0.as_deref().map(encode_b64),
+        recovery_bundle_salt: row.1.as_deref().map(encode_b64),
+    }))
+}
+
 async fn confirm_password_reset(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -914,6 +1030,24 @@ async fn confirm_password_reset(
     }
     let bundle = decode_b64_opt(&body.encrypted_key_bundle)?;
     let bundle_salt = decode_b64_opt(&body.bundle_salt)?;
+    let encryption_pk = decode_b64_opt(&body.encryption_public_key)?;
+    let recovery_bundle = decode_b64_opt(&body.encrypted_recovery_bundle)?;
+    let recovery_salt = decode_b64_opt(&body.recovery_bundle_salt)?;
+
+    // Rotating the identity key is all-or-nothing. A client that sends a new public key but keeps
+    // the old recovery bundle leaves a code that unwraps a secret no longer matching the published
+    // key: using it later would look like a successful recovery and decrypt nothing.
+    if encryption_pk.is_some()
+        && (bundle.is_none()
+            || bundle_salt.is_none()
+            || recovery_bundle.is_none()
+            || recovery_salt.is_none())
+    {
+        return Err(fail(
+            StatusCode::BAD_REQUEST,
+            "a new encryption_public_key must arrive with a new key bundle and recovery bundle",
+        ));
+    }
 
     let hash = sessions::hash_token(&body.token);
     let user_id = session_db::consume_one_time_token(
@@ -936,13 +1070,19 @@ async fn confirm_password_reset(
     sqlx::query(
         "UPDATE users SET password_hash = $1, auth_salt = $2,
                 encrypted_key_bundle = COALESCE($3, encrypted_key_bundle),
-                bundle_salt = COALESCE($4, bundle_salt)
-         WHERE id = $5",
+                bundle_salt = COALESCE($4, bundle_salt),
+                encryption_public_key = COALESCE($5, encryption_public_key),
+                encrypted_recovery_bundle = COALESCE($6, encrypted_recovery_bundle),
+                recovery_bundle_salt = COALESCE($7, recovery_bundle_salt)
+         WHERE id = $8",
     )
     .bind(&password_hash)
     .bind(&auth_salt)
     .bind(&bundle)
     .bind(&bundle_salt)
+    .bind(&encryption_pk)
+    .bind(&recovery_bundle)
+    .bind(&recovery_salt)
     .bind(user_id)
     .execute(&state.pool)
     .await
@@ -963,6 +1103,181 @@ async fn confirm_password_reset(
     .await;
 
     Ok(Json(serde_json::json!({ "ok": true, "sessions_revoked": revoked })))
+}
+
+/// What re-authentication needs: the stored hash, and whether there is key material at risk.
+#[derive(sqlx::FromRow)]
+struct ReauthRow {
+    password_hash: String,
+    has_key_bundle: bool,
+}
+
+/// Load the caller's stored verifier hash and check the one they just supplied.
+///
+/// Shared by `/auth/password/change` and `/auth/recovery/reissue`. Both are protected routes, so
+/// this is a *second* factor in the literal sense — the session proves the browser, this proves
+/// the person. The rate-limit token is refunded when the check passes: a legitimate password
+/// change should not eat into the same IP's ability to sign in.
+async fn reauthenticate(
+    state: &AppState,
+    user_id: Uuid,
+    ip: IpAddr,
+    current_verifier: &str,
+) -> Result<ReauthRow, ApiError> {
+    let row = sqlx::query_as::<_, ReauthRow>(
+        "SELECT password_hash, (encrypted_key_bundle IS NOT NULL) AS has_key_bundle
+         FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| internal("reauth lookup failed", e))?
+    .ok_or_else(|| fail(StatusCode::NOT_FOUND, "user not found"))?;
+
+    if !password::verify_verifier(current_verifier, &row.password_hash) {
+        return Err(fail(StatusCode::UNAUTHORIZED, "current password is incorrect"));
+    }
+
+    state.rate_limiter.refund(RouteClass::SignIn, ip);
+    Ok(row)
+}
+
+/// `POST /auth/password/change`.
+async fn change_password(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Extension(auth): Extension<AuthUser>,
+    Json(body): Json<PasswordChangeRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let ip = limit_key(&state, peer, &headers);
+    // Guessing the current password is the same attack as guessing it at the sign-in form, so it
+    // belongs in the same bucket. The token is handed back below once the guess turns out right.
+    enforce_limit(&state, RouteClass::SignIn, ip)?;
+
+    password::validate_password_length(
+        body.password_length,
+        state.config.registration.min_password_length,
+    )
+    .map_err(|m| fail(StatusCode::BAD_REQUEST, &m))?;
+    password::validate_verifier_shape(&body.verifier)
+        .map_err(|m| fail(StatusCode::BAD_REQUEST, &m))?;
+
+    let auth_salt = decode_b64(&body.auth_salt)?;
+    if auth_salt.len() < 16 {
+        return Err(fail(
+            StatusCode::BAD_REQUEST,
+            "auth_salt must be at least 16 bytes",
+        ));
+    }
+    let bundle = decode_b64_opt(&body.encrypted_key_bundle)?;
+    let bundle_salt = decode_b64_opt(&body.bundle_salt)?;
+
+    let row = reauthenticate(&state, auth.user_id, ip, &body.current_verifier).await?;
+
+    // The wrap key is `Argon2id(password, bundle_salt)`. A new password means a new wrap key, so
+    // an account with key material that does not re-wrap has just locked itself out of its own
+    // messages — silently, and irreversibly without the recovery code. Refuse instead.
+    if row.has_key_bundle && (bundle.is_none() || bundle_salt.is_none()) {
+        return Err(fail(
+            StatusCode::BAD_REQUEST,
+            "encrypted_key_bundle and bundle_salt are required: the x25519 secret must be \
+             re-wrapped under the new password",
+        ));
+    }
+
+    let password_hash = password::hash_verifier(&body.verifier)
+        .map_err(|e| internal("verifier hashing failed", e))?;
+
+    // `encryption_public_key` and the recovery bundle are deliberately untouched. The identity key
+    // does not change when the password does — only the wrapping around it — which is what makes
+    // old messages still readable afterwards, and what keeps the existing recovery code valid.
+    sqlx::query(
+        "UPDATE users SET password_hash = $1, auth_salt = $2,
+                encrypted_key_bundle = COALESCE($3, encrypted_key_bundle),
+                bundle_salt = COALESCE($4, bundle_salt)
+         WHERE id = $5",
+    )
+    .bind(&password_hash)
+    .bind(&auth_salt)
+    .bind(&bundle)
+    .bind(&bundle_salt)
+    .bind(auth.user_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| internal("password change failed", e))?;
+
+    // Other sessions go; this one stays. The usual reason to change a password is that someone
+    // else may have it, and whoever that is may be signed in right now.
+    let revoked = session_db::revoke_all_except(&state.pool, auth.user_id, auth.session_id)
+        .await
+        .map_err(|e| internal("revoking other sessions failed", e))?;
+
+    record_audit(
+        &state.pool,
+        Some(auth.user_id),
+        "auth.password_change",
+        Some(auth.user_id),
+        serde_json::json!({ "sessions_revoked": revoked }),
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({ "ok": true, "sessions_revoked": revoked })))
+}
+
+/// `POST /auth/recovery/reissue`.
+async fn reissue_recovery(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Extension(auth): Extension<AuthUser>,
+    Json(body): Json<RecoveryReissueRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let ip = limit_key(&state, peer, &headers);
+    enforce_limit(&state, RouteClass::SignIn, ip)?;
+
+    let recovery_bundle = decode_b64(&body.encrypted_recovery_bundle)?;
+    let recovery_salt = decode_b64(&body.recovery_bundle_salt)?;
+    if recovery_salt.len() < 16 {
+        return Err(fail(
+            StatusCode::BAD_REQUEST,
+            "recovery_bundle_salt must be at least 16 bytes",
+        ));
+    }
+    if recovery_bundle.is_empty() {
+        return Err(fail(
+            StatusCode::BAD_REQUEST,
+            "encrypted_recovery_bundle must not be empty",
+        ));
+    }
+
+    reauthenticate(&state, auth.user_id, ip, &body.current_verifier).await?;
+
+    // Overwrite, not append. The old wrapping is gone the moment this row is written, and with it
+    // the only thing the previous 12 words were good for.
+    sqlx::query(
+        "UPDATE users SET encrypted_recovery_bundle = $1, recovery_bundle_salt = $2 WHERE id = $3",
+    )
+    .bind(&recovery_bundle)
+    .bind(&recovery_salt)
+    .bind(auth.user_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| internal("recovery reissue failed", e))?;
+
+    record_audit(
+        &state.pool,
+        Some(auth.user_id),
+        "auth.recovery_reissued",
+        Some(auth.user_id),
+        serde_json::json!({}),
+    )
+    .await;
+
+    // Note what is *not* here: the code. It was generated in the browser and this server has never
+    // seen it, so there is no endpoint that could hand it back — which is the whole reason the
+    // recovery path is safe to leave unauthenticated at the far end.
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn me(
