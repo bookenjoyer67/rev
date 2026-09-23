@@ -224,9 +224,6 @@ superadmin_public_keys = []
         let config: Config = toml::from_str(toml).expect("parse config");
         assert_eq!(config.server.port, 3000);
         assert_eq!(config.database.max_connections, 5);
-        assert_eq!(config.relay.enabled, false);
-        assert_eq!(config.relay.port, 9001);
-        assert_eq!(config.relay.max_clients_per_room, 100);
     }
 
     #[test]
@@ -249,27 +246,5 @@ superadmin_public_keys = []
         assert!(config.database.url.contains("localhost"));
         assert!(config.database.url.contains("postgres"));
         assert_eq!(config.database.max_connections, 5);
-    }
-
-    #[test]
-    fn test_config_relay_disabled_by_default() {
-        let toml = r#"
-[server]
-bind_address = "127.0.0.1"
-port = 3000
-
-[database]
-url = "postgres://localhost/test"
-max_connections = 5
-
-[auth]
-jwt_secret = "this-is-at-least-32-characters-long-for-testing"
-
-[admin]
-superadmin_public_keys = []
-"#;
-        let config: Config = toml::from_str(toml).expect("parse config");
-        assert!(!config.relay.enabled);
-        assert_eq!(config.relay.port, 9001);
     }
 }

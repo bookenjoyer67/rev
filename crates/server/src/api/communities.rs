@@ -8,7 +8,9 @@ use axum::{
 use serde::Serialize;
 use uuid::Uuid;
 
-use komun_core::models::{Community, CreateCommunity, Invite};
+// A1.5: these models moved out of komun-core with the multi-tenant schema; the stand-ins now
+// live next to the queries that use them, in crate::db::communities. A3.1 deletes both files.
+use crate::db::communities::{Community, CreateCommunity, Invite};
 use crate::auth::{require_auth, verify_token, AuthUser};
 use crate::AppState;
 
@@ -77,29 +79,8 @@ async fn create_community(
     Extension(auth): Extension<AuthUser>,
     Json(input): Json<CreateCommunity>,
 ) -> Result<Json<Community>, StatusError> {
-    let description = input.description.clone().unwrap_or_default();
-    let visibility_str = match input.visibility.clone().unwrap_or(komun_core::models::Visibility::Federated) {
-        komun_core::models::Visibility::Public => "public",
-        komun_core::models::Visibility::Federated => "federated",
-        komun_core::models::Visibility::Private => "private",
-    };
-
-    let (map_community_id, map_secret_key) = if let Some(ref store) = state.relay_store {
-        match crate::relay_ops::create_relay_community(
-            store,
-            &input.name,
-            &description,
-            visibility_str,
-        ).await {
-            Ok((cid, secret)) => (uuid::Uuid::parse_str(&cid).ok(), Some(secret)),
-            Err(e) => {
-                tracing::warn!("relay community creation failed: {}", e);
-                (None, None)
-            }
-        }
-    } else {
-        (None, None)
-    };
+    // A1.5: the relay store and crate::relay_ops are gone, so no map community is provisioned.
+    let (map_community_id, map_secret_key): (Option<uuid::Uuid>, Option<Vec<u8>>) = (None, None);
 
     let community = crate::db::communities::create(
         &state.pool,

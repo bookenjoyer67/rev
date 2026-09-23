@@ -3,15 +3,12 @@ pub mod auth;
 pub mod config;
 mod db;
 mod federation;
-mod relay_bridge;
-mod relay_ops;
 mod repl;
 mod security_headers;
 mod tasks;
 #[cfg(test)]
 mod tests;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -29,7 +26,6 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 pub struct AppState {
     pub pool: sqlx::PgPool,
     pub config: Arc<Config>,
-    pub relay_store: Option<Arc<komun_relay::storage::PersistentStore>>,
 }
 
 #[tokio::main]
@@ -67,28 +63,9 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("Failed to run database migrations. Is the migrations/ directory present and accessible from the working directory?")?;
 
-    let relay_store: Option<Arc<komun_relay::storage::PersistentStore>> = if config.relay.enabled {
-        let storage_path = PathBuf::from(&config.relay.storage_path);
-        std::fs::create_dir_all(&storage_path)
-            .with_context(|| format!("Failed to create relay storage directory: {}", storage_path.display()))?;
-        let snapshot_path = storage_path.join("community_data.json");
-        let store = Arc::new(
-            komun_relay::storage::PersistentStore::new(
-                Some(snapshot_path),
-                10000,
-            )
-        );
-        let relay_config = config.relay.clone();
-        tokio::spawn(relay_bridge::spawn_relay(relay_config, store.clone()));
-        Some(store)
-    } else {
-        None
-    };
-
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),
-        relay_store,
     };
 
     tasks::spawn_background_tasks(state.clone());

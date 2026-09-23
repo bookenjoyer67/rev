@@ -2,55 +2,74 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum PostKind {
-    Resource,
-    Need,
-    Offer,
+db_enum!(
+    /// Aid kinds (`resource`, `need`, `offer`) and marketplace kinds (`listing`, `want`).
+    PostKind {
+        Resource => "resource",
+        Need => "need",
+        Offer => "offer",
+        Listing => "listing",
+        Want => "want",
+    }
+);
+
+impl PostKind {
+    /// Marketplace kinds are the only ones that may carry price or condition.
+    pub fn is_market(&self) -> bool {
+        matches!(self, PostKind::Listing | PostKind::Want)
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Category {
-    Food,
-    Shelter,
-    Health,
-    Transport,
-    Education,
-    Labor,
-    Legal,
-    Other,
-}
+db_enum!(
+    Urgency {
+        Critical => "critical",
+        High => "high",
+        Medium => "medium",
+        Low => "low",
+    }
+);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Urgency {
-    Critical,
-    High,
-    Medium,
-    Low,
-}
+db_enum!(
+    PostStatus {
+        Active => "active",
+        Matched => "matched",
+        Fulfilled => "fulfilled",
+        Expired => "expired",
+        Withdrawn => "withdrawn",
+        Hidden => "hidden",
+        Flagged => "flagged",
+    }
+);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PostStatus {
-    Active,
-    Matched,
-    Fulfilled,
-    Expired,
-    Withdrawn,
-    Hidden,
-    Flagged,
-}
+db_enum!(
+    /// A post is either visible to everyone or to nobody but its author.
+    Visibility {
+        Public => "public",
+        Private => "private",
+    }
+);
+
+db_enum!(
+    ItemCondition {
+        New => "new",
+        LikeNew => "like_new",
+        Good => "good",
+        Fair => "fair",
+        Poor => "poor",
+        ForParts => "for_parts",
+    }
+);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Post {
     pub id: Uuid,
-    pub community_id: Uuid,
     pub author_id: Uuid,
     pub kind: PostKind,
-    pub category: Category,
+    /// Slug into the `categories` table.
+    pub category: String,
+    /// Human label for `category`, joined in by list/detail queries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_label: Option<String>,
     pub title: String,
     pub body: Option<String>,
     pub location_name: Option<String>,
@@ -59,15 +78,21 @@ pub struct Post {
     pub urgency: Option<Urgency>,
     pub quantity: Option<i32>,
     pub status: PostStatus,
-    pub visibility: super::community::Visibility,
+    pub visibility: Visibility,
     pub expires_at: Option<DateTime<Utc>>,
     pub tags: Vec<String>,
     pub contact_method: Option<String>,
     pub images: Vec<String>,
     pub verified_by: Option<Uuid>,
     pub verified_at: Option<DateTime<Utc>>,
-    pub federated_id: Option<String>,
-    pub origin_node: Option<String>,
+    // marketplace facet — only meaningful on PostKind::Listing / PostKind::Want
+    pub market_listed: bool,
+    pub price_cents: Option<i64>,
+    pub currency: Option<String>,
+    pub price_negotiable: bool,
+    pub item_condition: Option<ItemCondition>,
+    pub sold_at: Option<DateTime<Utc>>,
+    pub buyer_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -75,7 +100,7 @@ pub struct Post {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatePost {
     pub kind: PostKind,
-    pub category: Category,
+    pub category: String,
     pub title: String,
     pub body: Option<String>,
     pub location_name: Option<String>,
@@ -83,8 +108,15 @@ pub struct CreatePost {
     pub location_lon: Option<f64>,
     pub urgency: Option<Urgency>,
     pub quantity: Option<i32>,
-    pub visibility: Option<super::community::Visibility>,
+    pub visibility: Option<Visibility>,
     pub expires_at: Option<DateTime<Utc>>,
     pub tags: Option<Vec<String>>,
     pub contact_method: Option<String>,
+    #[serde(default)]
+    pub market_listed: bool,
+    pub price_cents: Option<i64>,
+    pub currency: Option<String>,
+    #[serde(default)]
+    pub price_negotiable: bool,
+    pub item_condition: Option<ItemCondition>,
 }

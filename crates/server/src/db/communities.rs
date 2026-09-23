@@ -1,10 +1,53 @@
 use anyhow::{anyhow, Result};
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sqlx::{FromRow, PgPool, Row};
 use uuid::Uuid;
 
-use komun_core::models::{Community, CreateCommunity, Invite, Visibility};
+// A1.5: `Community`, `CreateCommunity` and `Invite` left komun-core with the rest of the
+// multi-tenant model, and the `communities` / `members` / `invites` tables are gone from the
+// schema. These local stand-ins keep the module compiling until A3.1 deletes it outright.
+// `visibility` is a plain string here because `Visibility::Federated` no longer exists.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Community {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub location_name: Option<String>,
+    pub location_lat: Option<f64>,
+    pub location_lon: Option<f64>,
+    pub visibility: String,
+    pub created_at: chrono::DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub map_community_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub map_secret_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateCommunity {
+    pub name: String,
+    pub slug: String,
+    pub description: Option<String>,
+    pub location_name: Option<String>,
+    pub location_lat: Option<f64>,
+    pub location_lon: Option<f64>,
+    pub visibility: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Invite {
+    pub code: String,
+    pub community_id: Uuid,
+    pub created_by: Uuid,
+    pub uses_remaining: Option<i32>,
+    pub expires_at: Option<chrono::DateTime<Utc>>,
+    pub created_at: chrono::DateTime<Utc>,
+}
 
 pub async fn list(pool: &PgPool) -> Result<Vec<Community>> {
     let rows = sqlx::query_as::<_, CommunityRow>(
@@ -30,11 +73,7 @@ pub async fn get_by_slug(pool: &PgPool, slug: &str) -> Result<Community> {
 
 pub async fn create(pool: &PgPool, input: CreateCommunity, map_community_id: Option<Uuid>, map_secret_key: Option<&[u8]>) -> Result<Community> {
     let id = Uuid::now_v7();
-    let visibility = match input.visibility.unwrap_or(Visibility::Federated) {
-        Visibility::Public => "public",
-        Visibility::Federated => "federated",
-        Visibility::Private => "private",
-    };
+    let visibility = input.visibility.clone().unwrap_or_else(|| "federated".to_string());
 
     sqlx::query(
         "INSERT INTO communities (id, slug, name, description, location_name, location_lat, location_lon, visibility, map_community_id, map_secret_key) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
@@ -46,7 +85,7 @@ pub async fn create(pool: &PgPool, input: CreateCommunity, map_community_id: Opt
     .bind(&input.location_name)
     .bind(input.location_lat)
     .bind(input.location_lon)
-    .bind(visibility)
+    .bind(&visibility)
     .bind(map_community_id)
     .bind(map_secret_key)
     .execute(pool)
@@ -261,11 +300,7 @@ impl From<CommunityRow> for Community {
             location_name: r.location_name,
             location_lat: r.location_lat,
             location_lon: r.location_lon,
-            visibility: match r.visibility.as_str() {
-                "public" => Visibility::Public,
-                "private" => Visibility::Private,
-                _ => Visibility::Federated,
-            },
+            visibility: r.visibility,
             map_community_id: r.map_community_id,
             map_secret_hex: r.map_secret_key.map(|bytes| bytes.iter().map(|b| format!("{:02x}", b)).collect()),
             image_path: r.image_path,

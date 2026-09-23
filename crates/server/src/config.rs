@@ -14,31 +14,6 @@ pub struct Config {
     pub posts: PostsConfig,
     pub admin: AdminConfig,
     pub media: MediaConfig,
-    pub relay: RelayConfig,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct RelayConfig {
-    pub enabled: bool,
-    pub port: u16,
-    pub bind_address: String,
-    pub storage_path: String,
-    pub max_clients_per_room: usize,
-    pub external_url: Option<String>,
-}
-
-impl Default for RelayConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            port: 9001,
-            bind_address: "0.0.0.0".into(),
-            storage_path: "data/relay".into(),
-            max_clients_per_room: 100,
-            external_url: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -171,7 +146,6 @@ impl Default for Config {
             posts: PostsConfig::default(),
             admin: AdminConfig::default(),
             media: MediaConfig::default(),
-            relay: RelayConfig::default(),
         }
     }
 }
