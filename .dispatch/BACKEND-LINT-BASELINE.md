@@ -1,6 +1,9 @@
 # Backend lint baseline — updated by the orchestrator after A2a landed
 
-`cargo clippy -p komun-server --no-deps` now reports **exactly 5 warnings** on `feature/agent-a`.
+`cargo clippy -p komun-server --no-deps` reports **exactly 0 warnings on the merged tree** (`feature/agent-b`
+after merging `feature/agent-a`) — verified both ways: the row count is 0, and the project's standard gate
+`cargo clippy --release -- -D warnings` now finishes clean for the first time. The table below is the historical
+arithmetic that got there; do not treat it as current.
 A2a drove its own six entries to zero (verified: `count=5`, from the command that emits them).
 
 **Rules.** No card may raise this number. A card that owns one of these files drives its entries to 0.
