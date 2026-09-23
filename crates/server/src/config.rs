@@ -9,7 +9,6 @@ pub struct Config {
     pub node: NodeConfig,
     pub discovery: DiscoveryConfig,
     pub auth: AuthConfig,
-    pub federation: FederationConfig,
     pub security: SecurityConfig,
     pub posts: PostsConfig,
     pub admin: AdminConfig,
@@ -124,14 +123,6 @@ pub struct AuthConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-pub struct FederationConfig {
-    pub enabled: bool,
-    pub domain: Option<String>,
-    pub max_alliances: u32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub struct SecurityConfig {
     pub max_posts_per_hour: u32,
     pub max_messages_per_hour: u32,
@@ -205,7 +196,6 @@ impl Default for Config {
             node: NodeConfig::default(),
             discovery: DiscoveryConfig::default(),
             auth: AuthConfig::default(),
-            federation: FederationConfig::default(),
             security: SecurityConfig::default(),
             posts: PostsConfig::default(),
             admin: AdminConfig::default(),
@@ -264,16 +254,6 @@ impl Default for AuthConfig {
             jwt_secret: "komun-dev-secret-change-in-production".into(),
             token_lifetime_days: 30,
             max_registrations_per_hour: 20,
-        }
-    }
-}
-
-impl Default for FederationConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            domain: None,
-            max_alliances: 50,
         }
     }
 }

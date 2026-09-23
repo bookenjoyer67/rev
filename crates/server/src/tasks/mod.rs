@@ -3,8 +3,6 @@ mod health;
 mod expiry;
 mod bundle_cleanup;
 
-use std::sync::Arc;
-
 use crate::AppState;
 
 pub fn spawn_background_tasks(state: AppState) {
@@ -28,10 +26,5 @@ pub fn spawn_background_tasks(state: AppState) {
     {
         let s = state.clone();
         tokio::spawn(bundle_cleanup::user_cleanup_loop(s));
-    }
-
-    if config.federation.enabled {
-        let pool = state.pool.clone();
-        crate::federation::start_sync_loop(Arc::new(pool), 300); // every 5 minutes
     }
 }

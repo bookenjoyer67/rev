@@ -1,4 +1,3 @@
-mod alliances;
 mod reports;
 mod admin;
 mod communities;
@@ -27,7 +26,6 @@ pub fn router(state: AppState) -> Router {
         .merge(conversations::router(state.clone()))
         .merge(notifications::router(state.clone()))
         .merge(admin::router(state.clone()))
-        .merge(alliances::router(state.clone()))
         .merge(reports::router(state.clone()))
         .merge(search::router(state.clone()))
         .nest("/auth", auth::router(state.clone()))

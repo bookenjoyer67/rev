@@ -2,7 +2,6 @@ mod api;
 pub mod auth;
 pub mod config;
 mod db;
-mod federation;
 mod relay_bridge;
 mod relay_ops;
 mod repl;
