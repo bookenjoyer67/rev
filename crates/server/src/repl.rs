@@ -17,7 +17,7 @@ pub async fn run_repl(state: AppState) {
             Err(_) => break,
         };
 
-        let parts: Vec<&str> = line.trim().split_whitespace().collect();
+        let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.is_empty() {
             continue;
         }
@@ -122,7 +122,7 @@ async fn cmd_list_users(state: &AppState) {
         return;
     }
 
-    println!("{:<38} {:<20} {:<12} {}", "ID", "Name", "Role", "Created");
+    println!("{:<38} {:<20} {:<12} Created", "ID", "Name", "Role");
     for (id, name, role, created) in &rows {
         println!("{:<38} {:<20} {:<12} {}", id, name, role, created.format("%Y-%m-%d"));
     }

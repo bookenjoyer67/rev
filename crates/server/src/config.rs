@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::path::Path;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
@@ -14,6 +14,8 @@ pub struct Config {
     pub posts: PostsConfig,
     pub admin: AdminConfig,
     pub media: MediaConfig,
+    pub email: EmailConfig,
+    pub registration: RegistrationConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -50,10 +52,12 @@ pub struct DiscoveryConfig {
     pub registration_mode: String,
 }
 
+/// A2a: the signing-key setting is gone with the JWTs. Sessions are opaque database rows, so
+/// there is no secret here to configure, to leak, or to forget to rotate.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AuthConfig {
-    pub jwt_secret: String,
+    /// How long a session stays valid without being renewed.
     pub token_lifetime_days: u32,
     pub max_registrations_per_hour: u32,
 }
@@ -73,6 +77,31 @@ pub struct SecurityConfig {
     pub max_messages_per_hour: u32,
     pub max_matches_per_hour: u32,
     pub allowed_origins: String,
+    /// Reverse proxies whose `X-Forwarded-For` may be believed, as IP literals.
+    ///
+    /// Empty by default, and that default is the safe one: an unlisted peer's header is ignored
+    /// entirely. Honouring the header from anyone would let an attacker reset their own rate
+    /// limit by inventing a hop, which is worse than having no limiter, because it looks like one.
+    pub trusted_proxies: Vec<String>,
+}
+
+impl SecurityConfig {
+    /// Parse `trusted_proxies`, discarding entries that are not IP literals with a warning.
+    /// A typo in this list silently weakens rate limiting, so it is worth a log line.
+    pub fn trusted_proxy_ips(&self) -> Vec<std::net::IpAddr> {
+        self.trusted_proxies
+            .iter()
+            .filter_map(|raw| match raw.trim().parse::<std::net::IpAddr>() {
+                Ok(ip) => Some(ip),
+                Err(_) => {
+                    tracing::warn!(
+                        "[security] trusted_proxies entry {raw:?} is not an IP address; ignoring it"
+                    );
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -83,10 +112,63 @@ pub struct PostsConfig {
     pub default_ttl_resource_days: u32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct AdminConfig {
     pub superadmin_keys: Vec<String>,
+}
+
+/// SMTP settings for verification and password-reset mail (SPEC Part 1.5).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct EmailConfig {
+    pub smtp_host: Option<String>,
+    pub smtp_port: Option<u16>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    /// From address, e.g. `Komun <noreply@example.org>`.
+    pub from: Option<String>,
+    pub starttls: bool,
+    /// Link base for emailed URLs; falls back to `[node] public_url`.
+    pub public_url: Option<String>,
+}
+
+impl EmailConfig {
+    /// SMTP is configured only when a host and a from address are both present.
+    pub fn is_configured(&self) -> bool {
+        self.smtp_host.as_deref().is_some_and(|h| !h.trim().is_empty())
+            && self.from.as_deref().is_some_and(|f| !f.trim().is_empty())
+    }
+
+    pub fn port(&self) -> u16 {
+        self.smtp_port.unwrap_or(587)
+    }
+}
+
+/// Who may create an account, and whether they must confirm their address (A7).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct RegistrationConfig {
+    /// `open` | `invite` | `closed`.
+    pub mode: String,
+    pub require_email_verification: bool,
+    pub min_password_length: usize,
+}
+
+impl Default for RegistrationConfig {
+    fn default() -> Self {
+        Self {
+            mode: "open".into(),
+            require_email_verification: true,
+            min_password_length: 12,
+        }
+    }
+}
+
+impl RegistrationConfig {
+    pub fn is_valid_mode(&self) -> bool {
+        matches!(self.mode.as_str(), "open" | "invite" | "closed")
+    }
 }
 
 impl Default for PostsConfig {
@@ -95,14 +177,6 @@ impl Default for PostsConfig {
             default_ttl_need_days: 7,
             default_ttl_offer_days: 14,
             default_ttl_resource_days: 0,
-        }
-    }
-}
-
-impl Default for AdminConfig {
-    fn default() -> Self {
-        Self {
-            superadmin_keys: Vec::new(),
         }
     }
 }
@@ -129,23 +203,6 @@ impl Default for MediaConfig {
             max_post_images: 5,
             community_images_dir: "data/community-images".into(),
             max_community_image_bytes: 1_048_576,
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            database: DatabaseConfig::default(),
-            node: NodeConfig::default(),
-            discovery: DiscoveryConfig::default(),
-            auth: AuthConfig::default(),
-            federation: FederationConfig::default(),
-            security: SecurityConfig::default(),
-            posts: PostsConfig::default(),
-            admin: AdminConfig::default(),
-            media: MediaConfig::default(),
         }
     }
 }
@@ -195,8 +252,8 @@ impl Default for DiscoveryConfig {
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            jwt_secret: "komun-dev-secret-change-in-production".into(),
-            token_lifetime_days: 30,
+            // One source of truth: the session layer decides how long a session lives by default.
+            token_lifetime_days: crate::sessions::DEFAULT_LIFETIME_DAYS as u32,
             max_registrations_per_hour: 20,
         }
     }
@@ -219,6 +276,7 @@ impl Default for SecurityConfig {
             max_messages_per_hour: 200,
             max_matches_per_hour: 30,
             allowed_origins: "*".into(),
+            trusted_proxies: Vec::new(),
         }
     }
 }
@@ -236,22 +294,27 @@ impl Config {
         };
 
         config.apply_env_overrides();
-
-        if std::env::var("JWT_SECRET").is_err() {
-            tracing::warn!(
-                "JWT_SECRET not set in environment. Using value from config.toml. \
-                 Set JWT_SECRET env var for production deployments."
-            );
-        }
-
-        if config.auth.jwt_secret.len() < 32 {
-            tracing::error!(
-                "jwt_secret is too short ({} chars). Must be at least 32 characters.",
-                config.auth.jwt_secret.len()
-            );
-            return Err(anyhow::anyhow!("jwt_secret must be at least 32 characters"));
-        }
+        config.validate_registration()?;
         Ok(config)
+    }
+
+    /// SPEC Part 1.5: startup fails loudly when verification is demanded but unsendable.
+    pub fn validate_registration(&self) -> anyhow::Result<()> {
+        if !self.registration.is_valid_mode() {
+            return Err(anyhow::anyhow!(
+                "[registration] mode must be one of open, invite, closed (got {:?})",
+                self.registration.mode
+            ));
+        }
+
+        if self.registration.require_email_verification && !self.email.is_configured() {
+            return Err(anyhow::anyhow!(
+                "[registration] require_email_verification is true but [email] is not configured: \
+                 set smtp_host and from, or set require_email_verification = false"
+            ));
+        }
+
+        Ok(())
     }
 
     fn apply_env_overrides(&mut self) {
@@ -266,9 +329,6 @@ impl Config {
         }
         if let Ok(v) = std::env::var("KOMUN_NODE_NAME") {
             self.node.name = v;
-        }
-        if let Ok(v) = std::env::var("JWT_SECRET") {
-            self.auth.jwt_secret = v;
         }
         if let Ok(v) = std::env::var("BIND_ADDR") {
             let parts: Vec<&str> = v.rsplitn(2, ':').collect();

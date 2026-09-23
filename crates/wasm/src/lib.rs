@@ -307,19 +307,12 @@ pub fn decrypt_key_bundle(
         .map_err(|_| JsValue::from_str("wrong passphrase or corrupted bundle"))
 }
 
-#[wasm_bindgen]
-pub fn compute_recovery_id(passphrase: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let fixed_salt = b"komun-recovery-v1";
-    let params = Params::new(4096, 3, 1, Some(32))
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+// The recovery-lookup helper is deleted (A2a / SPEC F1). It derived Argon2id(passphrase,
+// salt = b"komun-recovery-v1")[..16] from a hardcoded salt compiled into the WASM and identical on
+// every deployment — a cross-deployment dictionary oracle, reachable through an unauthenticated and
+// unthrottled /auth/recover. Recovery is now a 12-word code that wraps the x25519 secret
+// client-side; the server never sees a recovery identifier at all.
 
-    let mut hash = vec![0u8; 32];
-    argon2.hash_password_into(passphrase, fixed_salt, &mut hash)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    Ok(hash[..16].to_vec())
-}
 const BIP39_WORDS: &[&str; 2048] = &[
     "abandon",
     "ability",

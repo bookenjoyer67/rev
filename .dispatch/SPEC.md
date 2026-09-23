@@ -571,6 +571,11 @@ docker run --rm --network bridge --entrypoint bash \
   -v ~/.hermes/profiles/dev/cache/scratch/depwarm/crate:/w -w /w agent-sandbox:komun \
   -lc 'export PATH=/usr/local/cargo/bin:$PATH; cargo add lettre --features smtp-transport; cargo fetch'
 # -> lettre 0.11.23 in /usr/local/cargo/registry/src/index.crates.io-*/lettre-0.11.23  (verified)
+# RESOLVED 2026-09-23: the exact feature set A2a needs — lettre 0.11 with {smtp-transport, tokio1-rustls-tls,
+# builder, hostname}, plus argon2 0.5 and sha2 0.10 — resolves and builds FULLY OFFLINE from this cache.
+# Cargo.lock gains all three and `CARGO_NET_OFFLINE=true cargo build -p komun-server` → Finished, exit 0.
+# argon2/sha2 were already in the lock (komun-wasm depends on them); lettre was the only new edge, and the
+# expanded feature set needed no extra fetch beyond what this pre-warm already pulled.
 ```
 
 Run these **before** the card that needs them, with `--network bridge` on the throwaway container —

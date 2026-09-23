@@ -3,12 +3,15 @@ pub mod auth;
 pub mod config;
 mod db;
 mod federation;
+mod rate_limit;
 mod repl;
 mod security_headers;
+mod sessions;
 mod tasks;
 #[cfg(test)]
 mod tests;
 
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -26,6 +29,16 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 pub struct AppState {
     pub pool: sqlx::PgPool,
     pub config: Arc<Config>,
+    /// In-process token buckets for the auth routes (A2a).
+    pub rate_limiter: Arc<rate_limit::RateLimiter>,
+    /// `None` when `[email]` is unconfigured, which startup only permits while
+    /// `require_email_verification` is false.
+    pub mailer: Arc<Option<auth::email::Mailer>>,
+    /// Parsed once at startup: proxies whose `X-Forwarded-For` may be believed.
+    pub trusted_proxies: Arc<Vec<IpAddr>>,
+    /// Per-process secret behind the decoy salts that keep `GET /auth/salt` from confirming
+    /// whether an address has an account here.
+    pub salt_pepper: Arc<Vec<u8>>,
 }
 
 #[tokio::main]
@@ -41,11 +54,16 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::load()
         .context("Failed to load configuration. Copy config.example.toml to config.toml and edit it, or set KOMUN_CONFIG to a custom path.")?;
 
-    std::env::set_var("JWT_SECRET", &config.auth.jwt_secret);
+    // A2a: there is no signing key to install into the environment any more. Sessions are rows in
+    // `sessions`, so authority comes from the database, not from a secret this process holds.
 
-    if config.auth.jwt_secret.len() < 40 {
-        anyhow::bail!(
-            "JWT_SECRET is too short (< 40 chars). Set it in config.toml [auth] jwt_secret or via the JWT_SECRET environment variable. Generate with: openssl rand -base64 48"
+    // Built before the listener so a misconfigured `[email]` block is a startup failure rather
+    // than a surprise at the first signup.
+    let mailer = auth::email::Mailer::from_config(&config)
+        .context("Failed to build the SMTP mailer from [email]")?;
+    if mailer.is_none() {
+        tracing::warn!(
+            "[email] is not configured: no verification or password-reset mail will be sent"
         );
     }
 
@@ -66,9 +84,14 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),
+        rate_limiter: Arc::new(rate_limit::RateLimiter::new()),
+        mailer: Arc::new(mailer),
+        trusted_proxies: Arc::new(config.security.trusted_proxy_ips()),
+        salt_pepper: Arc::new(sessions::generate_pepper()),
     };
 
     tasks::spawn_background_tasks(state.clone());
+    tokio::spawn(sessions::cleanup_loop(pool.clone()));
 
     let allowed_origins = &state.config.security.allowed_origins;
     let cors_headers = [header::AUTHORIZATION, header::CONTENT_TYPE];
@@ -120,8 +143,11 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("komun listening on http://{}", bind);
 
+    // ConnectInfo is required, not optional: the auth rate limiter keys its buckets on the peer
+    // address, and a limiter that cannot tell callers apart is not a limiter.
     let server = tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
+        let service = app.into_make_service_with_connect_info::<SocketAddr>();
+        if let Err(e) = axum::serve(listener, service).await {
             tracing::error!("Server error: {}", e);
         }
     });

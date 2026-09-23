@@ -1,6 +1,5 @@
 use axum::{
-    extract::{Extension, Multipart, Path, Request, State},
-    http::header,
+    extract::{Extension, Multipart, Path, State},
     middleware,
     routing::{delete, get, patch, post},
     Json, Router,
@@ -11,7 +10,7 @@ use uuid::Uuid;
 // A1.5: these models moved out of komun-core with the multi-tenant schema; the stand-ins now
 // live next to the queries that use them, in crate::db::communities. A3.1 deletes both files.
 use crate::db::communities::{Community, CreateCommunity, Invite};
-use crate::auth::{require_auth, verify_token, AuthUser};
+use crate::auth::{require_auth, AuthUser};
 use crate::AppState;
 
 pub fn router(state: AppState) -> Router {
@@ -51,21 +50,12 @@ async fn list_communities(
 async fn get_community(
     State(state): State<AppState>,
     Path(slug): Path<String>,
-    request: Request,
 ) -> Result<Json<CommunityResponse>, StatusError> {
     let community = crate::db::communities::get_by_slug(&state.pool, &slug).await?;
 
-    let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_default();
-    let user_id = request.headers().get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .and_then(|token| verify_token(&jwt_secret, token));
-
-    let member_role = if let Some(uid) = user_id {
-        crate::db::communities::get_member_role(&state.pool, community.id, uid).await.ok().flatten()
-    } else {
-        None
-    };
+    // A2a: JWT is gone and this file is not A2a's to port to session auth (A3.1 deletes it).
+    // Optional auth on a public route degrades to anonymous.
+    let member_role: Option<String> = None;
 
     Ok(Json(CommunityResponse {
         is_member: member_role.is_some(),
