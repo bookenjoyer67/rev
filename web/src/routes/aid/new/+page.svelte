@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { requireAuth } from '$lib/stores/auth';
 	import { api } from '$lib/api/client';
+	import LocationMap from '$lib/components/LocationMap.svelte';
 
 	let kind = $state('need');
 	let category = $state('other');
@@ -32,12 +33,22 @@
 	}
 
 	/*
-	 * The piggpin `<iframe>` map picker that used to live here is gone. It keyed off
-	 * `community.map_community_id` / `map_secret_hex` and `nodeInfo.relay_url`; a grep of
-	 * `crates/server/src` finds no handler that emits any of the three, so the picker could
-	 * never activate — removing it removes dead code, not a feature. `location_lat` /
-	 * `location_lon` are still sent, so a real picker can set them again later.
+	 * Coordinates stay optional. B6 replaces the removed piggpin iframe with click-to-place on
+	 * the Leaflet component (B2): a click sets `locationLat`/`locationLon` and draws the pin,
+	 * and "Remove pin" clears them so a post without coordinates stays creatable. No iframe,
+	 * no relay, no map-community credentials.
 	 */
+	const mapCenter = { lat: 20, lon: 0, zoom: 2 };
+
+	function setPickedLocation(coords: { lat: number; lon: number }) {
+		locationLat = coords.lat;
+		locationLon = coords.lon;
+	}
+
+	function clearLocation() {
+		locationLat = null;
+		locationLon = null;
+	}
 
 	function handleImages(e: Event) {
 		const files = (e.target as HTMLInputElement).files;
@@ -173,6 +184,26 @@
 			<span>Location (optional)</span>
 			<input type="text" bind:value={locationName} placeholder="Neighborhood or area" />
 		</label>
+
+		<div class="location-picker">
+			<LocationMap
+				lat={mapCenter.lat}
+				lon={mapCenter.lon}
+				zoom={mapCenter.zoom}
+				pickable
+				pickedLat={locationLat}
+				pickedLon={locationLon}
+				onpick={setPickedLocation}
+			/>
+			{#if locationLat != null && locationLon != null}
+				<p class="coords">
+					Pinned at {locationLat.toFixed(5)}, {locationLon.toFixed(5)}
+					<button type="button" class="clear-pin" onclick={clearLocation}>Remove pin</button>
+				</p>
+			{:else}
+				<p class="hint">Click the map to drop a pin. A post can be created without one.</p>
+			{/if}
+		</div>
 
 		<label>
 			<span>Contact method (optional)</span>
@@ -315,5 +346,38 @@
 
 	.img-btn {
 		font-size: var(--text-sm);
+	}
+
+	.location-picker {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+
+	.coords {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.85rem;
+		color: var(--text);
+		margin: 0;
+	}
+
+	.clear-pin {
+		background: none;
+		color: var(--accent);
+		font-size: 0.8rem;
+		font-weight: 600;
+		padding: 0;
+		min-height: unset;
+		min-width: unset;
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+
+	.hint {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		margin: 0;
 	}
 </style>

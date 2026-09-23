@@ -1,3 +1,30 @@
+<script module lang="ts">
+	export interface MapMarker {
+		lat: number;
+		lon: number;
+		label?: string;
+	}
+
+	export interface PickedCoords {
+		lat: number;
+		lon: number;
+	}
+
+	/**
+	 * Clamp a pair to a valid latitude/longitude. Returns `null` for anything
+	 * non-finite, so a nonsense click is ignored rather than pinning `NaN`.
+	 */
+	export function clampLatLon(lat: unknown, lon: unknown): PickedCoords | null {
+		const la = typeof lat === 'number' ? lat : Number(lat);
+		const lo = typeof lon === 'number' ? lon : Number(lon);
+		if (!Number.isFinite(la) || !Number.isFinite(lo)) return null;
+		return {
+			lat: Math.min(90, Math.max(-90, la)),
+			lon: Math.min(180, Math.max(-180, lo))
+		};
+	}
+</script>
+
 <script lang="ts">
 	// Leaflet ships without TypeScript declarations in this image and no
 	// @types/leaflet is installed (and none can be — no egress), so keep the
@@ -6,12 +33,6 @@
 	import * as L from 'leaflet';
 	import 'leaflet/dist/leaflet.css';
 
-	interface MapMarker {
-		lat: number;
-		lon: number;
-		label?: string;
-	}
-
 	interface Props {
 		lat: number;
 		lon: number;
@@ -19,6 +40,13 @@
 		tileUrl?: string;
 		attribution?: string;
 		markers?: MapMarker[];
+		/** Opt-in click-to-place mode. Off by default, so `/map` stays read-only. */
+		pickable?: boolean;
+		/** The current picked coordinates, drawn as an extra marker when `pickable`. */
+		pickedLat?: number | null;
+		pickedLon?: number | null;
+		/** Called with clamped coordinates when the user clicks the map in pick mode. */
+		onpick?: (coords: PickedCoords) => void;
 	}
 
 	let {
@@ -27,10 +55,22 @@
 		zoom = 13,
 		tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
 		attribution = '&copy; OpenStreetMap contributors',
-		markers = []
+		markers = [],
+		pickable = false,
+		pickedLat = null,
+		pickedLon = null,
+		onpick
 	}: Props = $props();
 
 	let container = $state<HTMLDivElement | null>(null);
+	// Raw state: a Leaflet object must not be wrapped in a deep reactive proxy.
+	let markerLayer = $state.raw<L.LayerGroup | null>(null);
+
+	const markerIcon = L.divIcon({
+		className: 'komun-map-marker',
+		iconSize: [14, 14],
+		iconAnchor: [7, 7]
+	});
 
 	$effect(() => {
 		if (!container) return;
@@ -52,20 +92,37 @@
 			console.warn('[LocationMap] invalid tile URL, showing an empty map', err);
 		}
 
-		const icon = L.divIcon({
-			className: 'komun-map-marker',
-			iconSize: [14, 14],
-			iconAnchor: [7, 7]
-		});
-		for (const marker of markers) {
-			L.marker([marker.lat, marker.lon], { icon })
-				.bindPopup(marker.label ?? '')
-				.addTo(instance);
+		if (pickable) {
+			instance.on('click', (event: unknown) => {
+				const latlng = (event as { latlng?: { lat: unknown; lng: unknown } })?.latlng;
+				const coords = clampLatLon(latlng?.lat, latlng?.lng);
+				if (coords) onpick?.(coords);
+			});
 		}
 
+		markerLayer = L.layerGroup().addTo(instance);
+
 		return () => {
+			markerLayer = null;
 			instance.remove();
 		};
+	});
+
+	// Markers live in their own effect so picking a point updates the pin without
+	// tearing down and rebuilding the map (and its view).
+	$effect(() => {
+		const layer = markerLayer;
+		if (!layer) return;
+
+		layer.clearLayers();
+		for (const marker of markers) {
+			L.marker([marker.lat, marker.lon], { icon: markerIcon })
+				.bindPopup(marker.label ?? '')
+				.addTo(layer);
+		}
+		if (pickable && pickedLat != null && pickedLon != null) {
+			L.marker([pickedLat, pickedLon], { icon: markerIcon }).addTo(layer);
+		}
 	});
 </script>
 
