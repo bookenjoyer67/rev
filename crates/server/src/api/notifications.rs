@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::auth::{require_auth, AuthUser};
 use crate::AppState;
-use super::communities::StatusError;
+use super::StatusError;
 
 pub fn router(state: AppState) -> Router {
     Router::new()

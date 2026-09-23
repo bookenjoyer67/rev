@@ -1,19 +1,13 @@
 import init, {
-	generate_keypair,
 	generate_x25519_keypair,
-	sign,
-	encrypt_message,
-	decrypt_message,
 	derive_shared_key,
 	encrypt_with_shared_key,
 	decrypt_with_shared_key,
 	generate_salt,
-	derive_key_from_passphrase,
+	derive_key_from_password,
 	encrypt_key_bundle,
 	decrypt_key_bundle,
-	compute_recovery_id,
 	generate_recovery_code,
-	hash_recovery_code,
 } from 'komun-wasm';
 
 let initialized = false;
@@ -25,11 +19,17 @@ async function ensureInit() {
 	}
 }
 
-export interface FullKeypair {
-	ed25519PublicKey: string;
-	ed25519SecretKey: string;
-	x25519PublicKey: string;
-	x25519SecretKey: string;
+/**
+ * The only long-lived secret an account has left (A2.10).
+ *
+ * There used to be a second one: a signature keypair, minted in the browser and used to sign a
+ * registration challenge the browser had just generated itself. It proved nothing, and it doubled
+ * the amount of key material every account had to keep alive. Identity is the password now; this
+ * x25519 pair exists solely so other people can encrypt messages to you.
+ */
+export interface IdentityKeypair {
+	publicKey: string;
+	secretKey: string;
 }
 
 export function bytesToBase64(bytes: Uint8Array): string {
@@ -45,91 +45,98 @@ function base64ToBytes(b64: string): Uint8Array {
 	return bytes;
 }
 
-export async function generateFullKeypair(): Promise<FullKeypair> {
+export async function generateIdentityKeypair(): Promise<IdentityKeypair> {
 	await ensureInit();
-	const edKp = generate_keypair();
-	const xKp = generate_x25519_keypair();
+	const kp = generate_x25519_keypair();
 	return {
-		ed25519PublicKey: bytesToBase64(new Uint8Array(edKp.public_key)),
-		ed25519SecretKey: bytesToBase64(new Uint8Array(edKp.secret_key)),
-		x25519PublicKey: bytesToBase64(new Uint8Array(xKp.public_key)),
-		x25519SecretKey: bytesToBase64(new Uint8Array(xKp.secret_key)),
+		publicKey: bytesToBase64(new Uint8Array(kp.public_key)),
+		secretKey: bytesToBase64(new Uint8Array(kp.secret_key)),
 	};
 }
 
-export interface KeyBundle {
-	encryptedBundle: string;
-	salt: string;
-	recoveryId: string;
+/** A fresh 16-byte salt, base64. Salts are public; only the password they stretch is not. */
+export async function generateSaltB64(): Promise<string> {
+	await ensureInit();
+	return bytesToBase64(new Uint8Array(generate_salt()));
 }
 
-export async function createKeyBundle(
-	ed25519Secret: string,
-	x25519Secret: string,
-	passphrase: string
-): Promise<KeyBundle> {
+/**
+ * `Argon2id(password, auth_salt)` — the value sent to the server in place of the password.
+ *
+ * The server stretches it again under its own per-user salt before storing it, so a database dump
+ * yields neither the password nor anything that can be replayed as one. This is the *only* value
+ * derived from the password that ever leaves the browser.
+ */
+export async function deriveVerifier(password: string, authSaltB64: string): Promise<string> {
 	await ensureInit();
-	const passphraseBytes = new TextEncoder().encode(passphrase);
+	const derived = derive_key_from_password(
+		new TextEncoder().encode(password),
+		base64ToBytes(authSaltB64)
+	);
+	return bytesToBase64(new Uint8Array(derived));
+}
+
+/**
+ * Seal the x25519 secret under a key derived from `secret` (a password, or the 12-word recovery
+ * code — the wrapping is identical, only the input differs).
+ *
+ * Returns the ciphertext and the salt that was used, both base64. The derived key itself is
+ * discarded here; nothing but the ciphertext is meant to be stored or transmitted.
+ */
+export async function wrapSecret(
+	x25519SecretB64: string,
+	secret: string
+): Promise<{ bundle: string; salt: string }> {
+	await ensureInit();
 	const salt = new Uint8Array(generate_salt());
-	const derivedKey = derive_key_from_passphrase(passphraseBytes, salt);
+	const derivedKey = derive_key_from_password(new TextEncoder().encode(secret), salt);
 	const encrypted = encrypt_key_bundle(
-		base64ToBytes(ed25519Secret),
-		base64ToBytes(x25519Secret),
+		base64ToBytes(x25519SecretB64),
 		new Uint8Array(derivedKey)
 	);
-	const recoveryIdBytes = compute_recovery_id(passphraseBytes);
-
 	return {
-		encryptedBundle: bytesToBase64(new Uint8Array(encrypted)),
+		bundle: bytesToBase64(new Uint8Array(encrypted)),
 		salt: bytesToBase64(salt),
-		recoveryId: bytesToBase64(new Uint8Array(recoveryIdBytes)),
 	};
 }
 
-export async function signRegisterChallenge(ed25519SecretKey: string): Promise<{ challenge: string; signature: string }> {
+/**
+ * The inverse of {@link wrapSecret}. Throws if the secret is wrong or the bundle was tampered with
+ * — the AEAD tag fails before anything is returned.
+ *
+ * The plaintext is the whole 32-byte x25519 secret. It used to be a 64-byte concatenation that
+ * callers split with `slice(0, 32)` / `slice(32, 64)`; with one secret left there is nothing to
+ * split, and the wasm side now rejects any plaintext that is not exactly 32 bytes rather than
+ * letting a stale two-secret bundle decrypt into a silently wrong key.
+ */
+export async function unwrapSecret(
+	bundleB64: string,
+	saltB64: string,
+	secret: string
+): Promise<string> {
 	await ensureInit();
-	const challenge = new Uint8Array(32);
-	crypto.getRandomValues(challenge);
-	const challengeB64 = bytesToBase64(challenge);
-	const payload = new TextEncoder().encode('komun-register:' + challengeB64);
-	const secretKey = base64ToBytes(ed25519SecretKey);
-	const sig = sign(payload, secretKey);
-	return { challenge: challengeB64, signature: bytesToBase64(new Uint8Array(sig)) };
+	const derivedKey = derive_key_from_password(
+		new TextEncoder().encode(secret),
+		base64ToBytes(saltB64)
+	);
+	const decrypted = decrypt_key_bundle(base64ToBytes(bundleB64), new Uint8Array(derivedKey));
+	return bytesToBase64(new Uint8Array(decrypted));
 }
 
-export async function recoverFromBundle(
-	encryptedBundle: string,
-	salt: string,
-	passphrase: string
-): Promise<{ ed25519Secret: string; x25519Secret: string }> {
-	await ensureInit();
-	const passphraseBytes = new TextEncoder().encode(passphrase);
-	const derivedKey = derive_key_from_passphrase(passphraseBytes, base64ToBytes(salt));
-	const decrypted = decrypt_key_bundle(base64ToBytes(encryptedBundle), new Uint8Array(derivedKey));
-	const bytes = new Uint8Array(decrypted);
-
-	return {
-		ed25519Secret: bytesToBase64(bytes.slice(0, 32)),
-		x25519Secret: bytesToBase64(bytes.slice(32, 64)),
-	};
-}
-
-export async function computeRecoveryId(passphrase: string): Promise<string> {
-	await ensureInit();
-	const passphraseBytes = new TextEncoder().encode(passphrase);
-	const id = compute_recovery_id(passphraseBytes);
-	return bytesToBase64(new Uint8Array(id));
-}
-
+/**
+ * A 12-word BIP39 phrase, generated in the browser and shown to the user exactly once.
+ *
+ * Nothing derived from it is ever sent: the server stores only the x25519 secret wrapped under it.
+ * That is what makes it a real second path in — and what makes losing it unrecoverable.
+ */
 export async function generateRecoveryCode(): Promise<string> {
 	await ensureInit();
 	return generate_recovery_code();
 }
 
-export async function hashRecoveryCode(code: string): Promise<string> {
-	await ensureInit();
-	const hash = hash_recovery_code(code);
-	return bytesToBase64(new Uint8Array(hash));
+/** Collapse whitespace and case so a code typed back in with odd spacing still matches. */
+export function normalizeRecoveryCode(code: string): string {
+	return code.trim().toLowerCase().split(/\s+/).join(' ');
 }
 
 export async function deriveConversationKey(
@@ -161,30 +168,6 @@ export async function decryptMessage(
 	await ensureInit();
 	const data = base64ToBytes(encryptedBase64);
 	const key = base64ToBytes(sharedKeyBase64);
-	const plaintext = decrypt_with_shared_key(data, key);
-	return new TextDecoder().decode(new Uint8Array(plaintext));
-}
-
-export async function deriveWrapKey(passphrase: string, salt: string): Promise<string> {
-	await ensureInit();
-	const passphraseBytes = new TextEncoder().encode(passphrase);
-	const saltBytes = base64ToBytes(salt);
-	const derived = derive_key_from_passphrase(passphraseBytes, saltBytes);
-	return bytesToBase64(new Uint8Array(derived));
-}
-
-export async function wrapAuthState(state: string, wrapKeyBase64: string): Promise<string> {
-	await ensureInit();
-	const stateBytes = new TextEncoder().encode(state);
-	const key = base64ToBytes(wrapKeyBase64);
-	const encrypted = encrypt_with_shared_key(stateBytes, key);
-	return bytesToBase64(new Uint8Array(encrypted));
-}
-
-export async function unwrapAuthState(encryptedBase64: string, wrapKeyBase64: string): Promise<string> {
-	await ensureInit();
-	const data = base64ToBytes(encryptedBase64);
-	const key = base64ToBytes(wrapKeyBase64);
 	const plaintext = decrypt_with_shared_key(data, key);
 	return new TextDecoder().decode(new Uint8Array(plaintext));
 }

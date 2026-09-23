@@ -1,7 +1,8 @@
-pub mod communities;
+// Merged: `communities/` (A) and `alliances/`, `federation/` (B) are all deleted.
 pub mod conversations;
 pub mod endorsements;
 pub mod notifications;
 pub mod posts;
 pub mod reports;
+pub mod sessions;
 pub mod users;

@@ -9,12 +9,11 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::AppState;
-use super::communities::StatusError;
+use super::StatusError;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/search", get(search))
-        .route("/search/communities", get(search_communities))
         .route("/search/users", get(search_users))
         .with_state(state)
 }
@@ -23,14 +22,12 @@ pub fn router(state: AppState) -> Router {
 struct SearchParams {
     q: String,
     kind: Option<String>,
-    community: Option<String>,
     limit: Option<i64>,
 }
 
 #[derive(Serialize, FromRow)]
 struct SearchResult {
     id: Uuid,
-    community_id: Uuid,
     kind: String,
     category: String,
     title: String,
@@ -38,22 +35,13 @@ struct SearchResult {
     location_name: Option<String>,
     urgency: Option<String>,
     status: String,
-    tags: Option<serde_json::Value>,
+    // `posts.tags` is `TEXT[]`. It was typed `Option<serde_json::Value>` here, which sqlx decodes
+    // only from json/jsonb — every call to this route failed on the decode.
+    tags: Option<Vec<String>>,
     author_id: Uuid,
     verified_by: Option<Uuid>,
     created_at: DateTime<Utc>,
     rank: f32,
-    community_slug: Option<String>,
-    community_name: Option<String>,
-}
-
-#[derive(Serialize, FromRow)]
-struct CommunitySearchResult {
-    id: Uuid,
-    slug: String,
-    name: String,
-    description: Option<String>,
-    location_name: Option<String>,
 }
 
 #[derive(Serialize, FromRow)]
@@ -64,73 +52,38 @@ struct UserSearchResult {
     endorsement_count: Option<i64>,
 }
 
+/// A3.2: no `JOIN communities`, no tenant parameter.
+///
+/// With that filter gone there is at most one optional predicate left, so the placeholders are
+/// fixed and the string is no longer assembled by hand. The old builder was also wrong — it
+/// wrapped `${}` around a value that already carried its own `$`, so the predicate it appended
+/// came out with a doubled placeholder marker and the query would not parse.
 async fn search(
     State(state): State<AppState>,
     Query(params): Query<SearchParams>,
 ) -> Result<Json<Vec<SearchResult>>, StatusError> {
-    let limit = params.limit.unwrap_or(20).min(50);
+    let limit = params.limit.unwrap_or(20).clamp(1, 50);
     let query = params.q.trim();
     if query.is_empty() {
         return Ok(Json(vec![]));
     }
 
-    let mut sql = String::from(
-        r#"SELECT p.id, p.community_id, p.kind, p.category, p.title, p.body,
+    let results = sqlx::query_as::<_, SearchResult>(
+        r#"SELECT p.id, p.kind, p.category, p.title, p.body,
            p.location_name, p.urgency, p.status, p.tags, p.author_id, p.verified_by,
            p.created_at,
-           ts_rank(p.search_vector, plainto_tsquery('english', $1)) AS rank,
-           c.slug AS community_slug, c.name AS community_name
+           ts_rank(p.search_vector, plainto_tsquery('english', $1)) AS rank
            FROM posts p
-           JOIN communities c ON c.id = p.community_id
            WHERE p.search_vector @@ plainto_tsquery('english', $1)
-             AND p.status = 'active'"#
-    );
-
-    if params.kind.is_some() {
-        sql.push_str(" AND p.kind = $2");
-    }
-    if params.community.is_some() {
-        sql.push_str(&format!(
-            " AND c.slug = ${}",
-            if params.kind.is_some() { "$3" } else { "$2" }
-        ));
-    }
-
-    sql.push_str(" ORDER BY rank DESC LIMIT $");
-    sql.push_str(&(1 + params.kind.is_some() as usize + params.community.is_some() as usize + 1).to_string());
-
-    let mut q = sqlx::query_as::<_, SearchResult>(&sql).bind(query);
-
-    if let Some(ref kind) = params.kind {
-        q = q.bind(kind);
-    }
-    if let Some(ref slug) = params.community {
-        q = q.bind(slug);
-    }
-    q = q.bind(limit);
-
-    let results = q.fetch_all(&state.pool).await?;
-    Ok(Json(results))
-}
-
-async fn search_communities(
-    State(state): State<AppState>,
-    Query(params): Query<SearchParams>,
-) -> Result<Json<Vec<CommunitySearchResult>>, StatusError> {
-    let query = params.q.trim();
-    if query.is_empty() {
-        return Ok(Json(vec![]));
-    }
-
-    let pattern = format!("%{}%", query);
-    let results = sqlx::query_as::<_, CommunitySearchResult>(
-        r#"SELECT id, slug, name, description, location_name
-           FROM communities
-           WHERE name ILIKE $1 OR description ILIKE $1 OR location_name ILIKE $1
-           ORDER BY name
-           LIMIT 20"#
+             AND p.status = 'active'
+             AND p.visibility = 'public'
+             AND ($2::text IS NULL OR p.kind = $2)
+           ORDER BY rank DESC
+           LIMIT $3"#,
     )
-    .bind(&pattern)
+    .bind(query)
+    .bind(params.kind.as_deref())
+    .bind(limit)
     .fetch_all(&state.pool)
     .await?;
 

@@ -1,8 +1,8 @@
 mod reports;
 mod admin;
-mod communities;
 mod conversations;
 mod endorsements;
+mod error;
 mod posts;
 mod health;
 mod node;
@@ -13,10 +13,16 @@ mod search;
 pub mod directory;
 mod users;
 
+// A3.2: `alliances` is no longer declared as a module. The file is still on disk because B owns
+// its deletion on the other branch; leaving the `mod` out means nothing compiles it and nothing
+// routes to it, so `GET /api/alliances` is a 404 here as the card requires.
+
 use axum::Router;
 
 use crate::AppState;
 use crate::auth;
+
+pub use error::StatusError;
 
 pub fn router(state: AppState) -> Router {
     let mut r = Router::new()
@@ -30,8 +36,8 @@ pub fn router(state: AppState) -> Router {
         .merge(search::router(state.clone()))
         .nest("/auth", auth::router(state.clone()))
         .nest("/users", users::router(state.clone()).merge(endorsements::router(state.clone())))
-        .nest("/communities", communities::router(state.clone()))
-        .nest("/communities/{slug}/posts", posts::router(state.clone()));
+        // A3.1: posts are a flat, server-wide collection now — no tenant segment in the path.
+        .nest("/posts", posts::router(state.clone()));
 
     r = r.route("/link-preview", axum::routing::get(link_preview::link_preview));
 

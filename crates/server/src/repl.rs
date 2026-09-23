@@ -17,7 +17,7 @@ pub async fn run_repl(state: AppState) {
             Err(_) => break,
         };
 
-        let parts: Vec<&str> = line.trim().split_whitespace().collect();
+        let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.is_empty() {
             continue;
         }
@@ -26,7 +26,6 @@ pub async fn run_repl(state: AppState) {
             "help" | "?" => print_help(),
             "stats" => cmd_stats(&state).await,
             "list-users" | "users" => cmd_list_users(&state).await,
-            "list-communities" | "communities" => cmd_list_communities(&state).await,
             "list-directory" | "directory" => cmd_list_directory(&state).await,
             "add-superadmin" => {
                 if parts.len() < 2 {
@@ -62,13 +61,13 @@ pub async fn run_repl(state: AppState) {
 async fn print_banner(state: &AppState) {
     let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(&state.pool).await.unwrap_or(0);
-    let communities: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM communities")
+    let posts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM posts WHERE status = 'active'")
         .fetch_one(&state.pool).await.unwrap_or(0);
 
     println!();
     println!("  \x1b[1mkomun\x1b[0m v{}", env!("CARGO_PKG_VERSION"));
-    println!("  node: {} | {} users | {} communities",
-        state.config.node.name, users, communities);
+    println!("  node: {} | {} users | {} active posts",
+        state.config.node.name, users, posts);
     if state.config.discovery.directory_enabled {
         println!("  directory: enabled");
     }
@@ -80,7 +79,6 @@ fn print_help() {
     println!("  help                  Show this message");
     println!("  stats                 Server statistics");
     println!("  list-users            List all registered users");
-    println!("  list-communities      List all communities");
     println!("  list-directory        List directory entries");
     println!("  add-superadmin <name> Promote a user to superadmin");
     println!("  remove-superadmin <n> Demote a superadmin to user");
@@ -92,8 +90,6 @@ fn print_help() {
 async fn cmd_stats(state: &AppState) {
     let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(&state.pool).await.unwrap_or(0);
-    let communities: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM communities")
-        .fetch_one(&state.pool).await.unwrap_or(0);
     let posts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM posts WHERE status = 'active'")
         .fetch_one(&state.pool).await.unwrap_or(0);
     let matches: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM matches")
@@ -104,7 +100,6 @@ async fn cmd_stats(state: &AppState) {
         .fetch_one(&state.pool).await.unwrap_or(0);
 
     println!("Users:         {}", users);
-    println!("Communities:   {}", communities);
     println!("Active posts:  {}", posts);
     println!("Matches:       {}", matches);
     println!("Messages:      {}", messages);
@@ -122,25 +117,9 @@ async fn cmd_list_users(state: &AppState) {
         return;
     }
 
-    println!("{:<38} {:<20} {:<12} {}", "ID", "Name", "Role", "Created");
+    println!("{:<38} {:<20} {:<12} Created", "ID", "Name", "Role");
     for (id, name, role, created) in &rows {
         println!("{:<38} {:<20} {:<12} {}", id, name, role, created.format("%Y-%m-%d"));
-    }
-}
-
-async fn cmd_list_communities(state: &AppState) {
-    let rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, slug, name FROM communities ORDER BY created_at"
-    )
-    .fetch_all(&state.pool).await.unwrap_or_default();
-
-    if rows.is_empty() {
-        println!("No communities.");
-        return;
-    }
-
-    for (id, slug, name) in &rows {
-        println!("{} /c/{} — {}", id, slug, name);
     }
 }
 

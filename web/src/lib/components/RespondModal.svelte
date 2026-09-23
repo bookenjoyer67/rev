@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { isAuthenticated, register, auth, getEncryptionSecretKey } from '$lib/stores/auth';
+	import { isAuthenticated, auth, getEncryptionSecretKey } from '$lib/stores/auth';
 	import { connectToServer, isConnected, getActiveServer } from '$lib/stores/server';
 	import { api } from '$lib/api/client';
 	import { deriveConversationKey, encryptMessage } from '$lib/crypto';
@@ -47,8 +47,12 @@
 			}
 
 			if (needsIdentity) {
-				const ok = await register(displayName.trim());
-				if (!ok) { error = 'Failed to create identity'; loading = false; return; }
+				// A3.4 removed the anonymous `register(displayName)` shim. An account needs an
+				// email and a password now, which is a page, not a field in this modal.
+				loading = false;
+				onClose();
+				goto('/account/signup');
+				return;
 			}
 
 			let body = message.trim();

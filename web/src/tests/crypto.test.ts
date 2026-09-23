@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
 	bytesToBase64,
-	generateFullKeypair,
-	createKeyBundle,
+	generateIdentityKeypair,
+	generateSaltB64,
+	deriveVerifier,
+	wrapSecret,
+	unwrapSecret,
 	generateRecoveryCode,
-	hashRecoveryCode,
-	computeRecoveryId,
-	signRegisterChallenge
+	normalizeRecoveryCode,
 } from '$lib/crypto';
 
 describe('bytesToBase64', () => {
@@ -34,39 +35,104 @@ describe('bytesToBase64', () => {
 	});
 });
 
-describe('generateFullKeypair', () => {
-	it('returns keys in base64', async () => {
-		const kp = await generateFullKeypair();
-		expect(kp.ed25519PublicKey).toBeTruthy();
-		expect(kp.ed25519SecretKey).toBeTruthy();
-		expect(kp.x25519PublicKey).toBeTruthy();
-		expect(kp.x25519SecretKey).toBeTruthy();
-		expect(() => atob(kp.ed25519PublicKey)).not.toThrow();
-		expect(() => atob(kp.x25519PublicKey)).not.toThrow();
+describe('generateIdentityKeypair', () => {
+	it('returns a 32-byte x25519 pair in base64', async () => {
+		const kp = await generateIdentityKeypair();
+		expect(() => atob(kp.publicKey)).not.toThrow();
+		expect(() => atob(kp.secretKey)).not.toThrow();
+		expect(atob(kp.publicKey).length).toBe(32);
+		expect(atob(kp.secretKey).length).toBe(32);
 	});
 
 	it('generates different keys each call', async () => {
-		const kp1 = await generateFullKeypair();
-		const kp2 = await generateFullKeypair();
-		expect(kp1.ed25519PublicKey).not.toBe(kp2.ed25519PublicKey);
+		const kp1 = await generateIdentityKeypair();
+		const kp2 = await generateIdentityKeypair();
+		expect(kp1.publicKey).not.toBe(kp2.publicKey);
+		expect(kp1.secretKey).not.toBe(kp2.secretKey);
+	});
+
+	// A2.10: there is no second keypair any more. Asserting on the absent fields is the point —
+	// a reintroduced signature key would show up here rather than silently in the wire format.
+	it('carries no signature key', async () => {
+		const kp = await generateIdentityKeypair();
+		expect(Object.keys(kp).sort()).toEqual(['publicKey', 'secretKey']);
 	});
 });
 
-describe('createKeyBundle', () => {
-	it('returns encrypted bundle with salt and recovery id', async () => {
-		const kp = await generateFullKeypair();
-		const bundle = await createKeyBundle(kp.ed25519SecretKey, kp.x25519SecretKey, 'test-passphrase');
-		expect(bundle.encryptedBundle).toBeTruthy();
-		expect(bundle.salt).toBeTruthy();
-		expect(bundle.recoveryId).toBeTruthy();
-		expect(() => atob(bundle.encryptedBundle)).not.toThrow();
-		expect(() => atob(bundle.salt)).not.toThrow();
-		expect(() => atob(bundle.recoveryId)).not.toThrow();
+describe('deriveVerifier', () => {
+	it('is deterministic in password and salt', async () => {
+		const salt = await generateSaltB64();
+		const a = await deriveVerifier('correct horse battery staple', salt);
+		const b = await deriveVerifier('correct horse battery staple', salt);
+		expect(a).toBe(b);
+	});
+
+	it('changes when the password changes', async () => {
+		const salt = await generateSaltB64();
+		const a = await deriveVerifier('correct horse battery staple', salt);
+		const b = await deriveVerifier('correct horse battery stapleX', salt);
+		expect(a).not.toBe(b);
+	});
+
+	it('changes when the salt changes', async () => {
+		const a = await deriveVerifier('same password', await generateSaltB64());
+		const b = await deriveVerifier('same password', await generateSaltB64());
+		expect(a).not.toBe(b);
+	});
+
+	it('is long enough for the server to accept', async () => {
+		// The server rejects anything shorter than 43 base64 chars as implausibly small for an
+		// Argon2id output; 32 raw bytes encode to 44.
+		const verifier = await deriveVerifier('a password', await generateSaltB64());
+		expect(verifier.length).toBeGreaterThanOrEqual(43);
+	});
+});
+
+describe('wrapSecret / unwrapSecret', () => {
+	it('round-trips the whole secret', async () => {
+		const kp = await generateIdentityKeypair();
+		const { bundle, salt } = await wrapSecret(kp.secretKey, 'a strong password');
+		const recovered = await unwrapSecret(bundle, salt, 'a strong password');
+		expect(recovered).toBe(kp.secretKey);
+	});
+
+	it('returns 32 bytes, not a half of a 64-byte blob', async () => {
+		// The old two-secret bundle was split with slice(0, 32) / slice(32, 64). With one secret
+		// left there is nothing to split, and a caller taking a slice would get a wrong key that
+		// still looked like a key.
+		const kp = await generateIdentityKeypair();
+		const { bundle, salt } = await wrapSecret(kp.secretKey, 'pw');
+		const recovered = await unwrapSecret(bundle, salt, 'pw');
+		expect(atob(recovered).length).toBe(32);
+	});
+
+	it('rejects the wrong secret', async () => {
+		const kp = await generateIdentityKeypair();
+		const { bundle, salt } = await wrapSecret(kp.secretKey, 'right password');
+		await expect(unwrapSecret(bundle, salt, 'wrong password')).rejects.toBeTruthy();
+	});
+
+	it('uses a fresh salt per wrap, so the same input gives a different bundle', async () => {
+		const kp = await generateIdentityKeypair();
+		const a = await wrapSecret(kp.secretKey, 'pw');
+		const b = await wrapSecret(kp.secretKey, 'pw');
+		expect(a.salt).not.toBe(b.salt);
+		expect(a.bundle).not.toBe(b.bundle);
+	});
+
+	it('wraps the same secret under a recovery code as under a password', async () => {
+		// This is what makes the code a real second way in: two wrappings, one secret.
+		const kp = await generateIdentityKeypair();
+		const code = await generateRecoveryCode();
+		const byPassword = await wrapSecret(kp.secretKey, 'pw');
+		const byCode = await wrapSecret(kp.secretKey, code);
+		expect(await unwrapSecret(byPassword.bundle, byPassword.salt, 'pw')).toBe(kp.secretKey);
+		expect(await unwrapSecret(byCode.bundle, byCode.salt, code)).toBe(kp.secretKey);
 	});
 });
 
 describe('generateRecoveryCode', () => {
-	it('generates BIP39-compatible 12-word phrase', async () => {
+	it('generates a 12-word phrase', async () => {
 		const code = await generateRecoveryCode();
 		const words = code.split(' ');
 		expect(words).toHaveLength(12);
@@ -74,55 +140,12 @@ describe('generateRecoveryCode', () => {
 	});
 });
 
-describe('hashRecoveryCode', () => {
-	it('produces base64 hash', async () => {
-		const hash = await hashRecoveryCode('test code');
-		expect(hash).toBeTruthy();
-		expect(() => atob(hash)).not.toThrow();
+describe('normalizeRecoveryCode', () => {
+	it('collapses spacing and case so a retyped code still matches', () => {
+		expect(normalizeRecoveryCode('  Abandon   ABILITY\nable  ')).toBe('abandon ability able');
 	});
 
-	it('same input = same hash', async () => {
-		const h1 = await hashRecoveryCode('same code');
-		const h2 = await hashRecoveryCode('same code');
-		expect(h1).toBe(h2);
-	});
-});
-
-describe('computeRecoveryId', () => {
-	it('returns base64 recovery id', async () => {
-		const id = await computeRecoveryId('test');
-		expect(id).toBeTruthy();
-		expect(() => atob(id)).not.toThrow();
-	});
-
-	it('same passphrase = same recovery id', async () => {
-		const id1 = await computeRecoveryId('my passphrase');
-		const id2 = await computeRecoveryId('my passphrase');
-		expect(id1).toBe(id2);
-	});
-});
-
-describe('signRegisterChallenge', () => {
-	it('returns challenge and signature', async () => {
-		const kp = await generateFullKeypair();
-		const result = await signRegisterChallenge(kp.ed25519SecretKey);
-		expect(result.challenge).toBeTruthy();
-		expect(result.signature).toBeTruthy();
-		expect(() => atob(result.challenge)).not.toThrow();
-		expect(() => atob(result.signature)).not.toThrow();
-	});
-
-	it('generates 32-byte challenges', async () => {
-		const kp = await generateFullKeypair();
-		const result = await signRegisterChallenge(kp.ed25519SecretKey);
-		const decoded = Uint8Array.from(atob(result.challenge), c => c.charCodeAt(0));
-		expect(decoded.length).toBe(32);
-	});
-
-	it('generates different challenges each call', async () => {
-		const kp = await generateFullKeypair();
-		const r1 = await signRegisterChallenge(kp.ed25519SecretKey);
-		const r2 = await signRegisterChallenge(kp.ed25519SecretKey);
-		expect(r1.challenge).not.toBe(r2.challenge);
+	it('leaves an already-clean code alone', () => {
+		expect(normalizeRecoveryCode('abandon ability able')).toBe('abandon ability able');
 	});
 });

@@ -15,16 +15,22 @@ use tokio::sync::Mutex as TokioMutex;
 
 use crate::AppState;
 use crate::auth::require_auth;
-use super::communities::StatusError;
+use super::StatusError;
 
 static REGISTRATIONS: LazyLock<TokioMutex<Vec<StdInstant>>> =
     LazyLock::new(|| TokioMutex::new(Vec::new()));
 
 pub fn router(state: AppState) -> Router {
+    // A3.2 (hub item 6): the gate is `[registration] mode` from the live config. It used to be
+    // `discovery.registration_mode`, a second copy of the same word that A2a's `[registration]`
+    // section superseded. `open` leaves the route public; `invite` and `closed` both put it
+    // behind `require_auth`, which is exactly the binary the old code had.
+    let registration_is_open = state.config.registration.mode == "open";
+
     let mut public = Router::new()
         .route("/directory", get(list_servers));
 
-    if state.config.discovery.registration_mode == "open" {
+    if registration_is_open {
         public = public.route("/directory/register", post(register_server));
     }
 
@@ -32,12 +38,12 @@ pub fn router(state: AppState) -> Router {
         .route("/directory/{url}", delete(remove_server))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
-    let protected_register = if state.config.discovery.registration_mode != "open" {
+    let protected_register = if registration_is_open {
+        None
+    } else {
         Some(Router::new()
             .route("/directory/register", post(register_server))
             .layer(middleware::from_fn_with_state(state.clone(), require_auth)))
-    } else {
-        None
     };
 
     let mut router = public.merge(protected);
@@ -86,6 +92,19 @@ pub struct SearchParams {
     radius: Option<f64>,
 }
 
+/// Columns of `directory_entries`, written once so the three queries below cannot drift.
+const ENTRY_COLUMNS: &str =
+    "url, name, description, location_name, location_lat, location_lon, version, last_seen, registered_at";
+
+/// Great-circle distance in km from `$1`/`$2` to a row's `location_lat`/`location_lon`.
+const DISTANCE_KM: &str = r#"(6371 * acos(
+    LEAST(1.0, GREATEST(-1.0,
+      cos(radians($1)) * cos(radians(location_lat)) *
+      cos(radians(location_lon) - radians($2)) +
+      sin(radians($1)) * sin(radians(location_lat))
+    ))
+  ))"#;
+
 async fn register_server(
     State(state): State<AppState>,
     Json(input): Json<RegisterRequest>,
@@ -105,6 +124,8 @@ async fn register_server(
 
     let url = input.url.trim_end_matches('/').to_string();
 
+    // A3.2: `communities_count` and `community_locations` are not columns of the squashed
+    // `directory_entries`. A server registering itself advertises one location, its own.
     sqlx::query(
         r#"INSERT INTO directory_entries (url, name, description, location_name, location_lat, location_lon, version, last_seen)
            VALUES ($1, $2, $3, $4, $5, $6, $7, now())
@@ -134,78 +155,56 @@ async fn list_servers(
     State(state): State<AppState>,
     Query(params): Query<SearchParams>,
 ) -> Result<Json<Vec<DirectoryEntryWithDistance>>, StatusError> {
+    // The nearby case used to run a second query that expanded each entry's
+    // `community_locations` JSONB into one result per community, then deduplicated the two
+    // result sets by url. With one location per server there is one query and nothing to merge.
     let entries = if let (Some(lat), Some(lon)) = (params.lat, params.lon) {
         let radius = params.radius.unwrap_or(50.0);
 
-        let rows = sqlx::query_as::<_, DirectoryEntryWithDist>(
-            r#"SELECT url, name, description, location_name, location_lat, location_lon,
-               version, last_seen, registered_at,
-               (6371 * acos(
-                 LEAST(1.0, GREATEST(-1.0,
-                   cos(radians($1)) * cos(radians(location_lat)) *
-                   cos(radians(location_lon) - radians($2)) +
-                   sin(radians($1)) * sin(radians(location_lat))
-                 ))
-               )) AS distance_km
+        let rows = sqlx::query_as::<_, DirectoryEntryWithDist>(&format!(
+            r#"SELECT {ENTRY_COLUMNS}, {DISTANCE_KM} AS distance_km
                FROM directory_entries
                WHERE location_lat IS NOT NULL AND location_lon IS NOT NULL
-               AND (6371 * acos(
-                 LEAST(1.0, GREATEST(-1.0,
-                   cos(radians($1)) * cos(radians(location_lat)) *
-                   cos(radians(location_lon) - radians($2)) +
-                   sin(radians($1)) * sin(radians(location_lat))
-                 ))
-               )) < $3
+               AND {DISTANCE_KM} < $3
                ORDER BY distance_km
-               LIMIT 20"#,
-        )
+               LIMIT 20"#
+        ))
         .bind(lat)
         .bind(lon)
         .bind(radius)
         .fetch_all(&state.pool)
         .await?;
 
-        rows.into_iter().map(|r| DirectoryEntryWithDistance {
-            entry: DirectoryEntry {
-                url: r.url,
-                name: r.name,
-                description: r.description,
-                location_name: r.location_name,
-                location_lat: r.location_lat,
-                location_lon: r.location_lon,
-                version: r.version,
-                last_seen: r.last_seen,
-                registered_at: r.registered_at,
-            },
-            distance_km: r.distance_km,
-        }).collect()
+        rows.into_iter().map(Into::into).collect()
     } else if let Some(ref q) = params.q {
         let pattern = format!("%{}%", q);
-        let rows = sqlx::query_as::<_, DirectoryEntry>(
-            r#"SELECT url, name, description, location_name, location_lat, location_lon,
-               version, last_seen, registered_at
+        let rows = sqlx::query_as::<_, DirectoryEntry>(&format!(
+            r#"SELECT {ENTRY_COLUMNS}
                FROM directory_entries
                WHERE name ILIKE $1 OR location_name ILIKE $1 OR description ILIKE $1
                ORDER BY last_seen DESC
-               LIMIT 20"#,
-        )
+               LIMIT 20"#
+        ))
         .bind(&pattern)
         .fetch_all(&state.pool)
         .await?;
 
-        rows.into_iter().map(|e| DirectoryEntryWithDistance { entry: e, distance_km: None }).collect()
+        rows.into_iter()
+            .map(|e| DirectoryEntryWithDistance { entry: e, distance_km: None })
+            .collect()
     } else {
-        let rows = sqlx::query_as::<_, DirectoryEntry>(
-            r#"SELECT url, name, description, location_name, location_lat, location_lon,
-               version, last_seen, registered_at
+        let rows = sqlx::query_as::<_, DirectoryEntry>(&format!(
+            r#"SELECT {ENTRY_COLUMNS}
                FROM directory_entries
                ORDER BY last_seen DESC
-               LIMIT 20"#,
-        )
+               LIMIT 20"#
+        ))
         .fetch_all(&state.pool)
         .await?;
 
-        rows.into_iter().map(|e| DirectoryEntryWithDistance { entry: e, distance_km: None }).collect()
+        rows.into_iter()
+            .map(|e| DirectoryEntryWithDistance { entry: e, distance_km: None })
+            .collect()
     };
 
     Ok(Json(entries))
@@ -234,4 +233,23 @@ struct DirectoryEntryWithDist {
     last_seen: DateTime<Utc>,
     registered_at: DateTime<Utc>,
     distance_km: Option<f64>,
+}
+
+impl From<DirectoryEntryWithDist> for DirectoryEntryWithDistance {
+    fn from(r: DirectoryEntryWithDist) -> Self {
+        DirectoryEntryWithDistance {
+            entry: DirectoryEntry {
+                url: r.url,
+                name: r.name,
+                description: r.description,
+                location_name: r.location_name,
+                location_lat: r.location_lat,
+                location_lon: r.location_lon,
+                version: r.version,
+                last_seen: r.last_seen,
+                registered_at: r.registered_at,
+            },
+            distance_km: r.distance_km,
+        }
+    }
 }

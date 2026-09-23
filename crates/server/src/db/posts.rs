@@ -1,39 +1,52 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use chrono::Utc;
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use komun_core::models::{Category, CreatePost, Post, PostKind, PostStatus, Urgency, Visibility};
+use komun_core::models::{
+    CreatePost, ItemCondition, Post, PostKind, PostStatus, Urgency, Visibility,
+};
 
+/// Every column the `Post` model is built from, in one place so `list` and `get` cannot drift.
+const POST_COLUMNS: &str = r#"id, author_id, kind, category, title, body,
+    location_name, location_lat, location_lon, urgency, quantity, status,
+    visibility, expires_at, tags, contact_method, images, verified_by, verified_at,
+    market_listed, price_cents, currency, price_negotiable, item_condition, sold_at, buyer_id,
+    created_at, updated_at"#;
+
+/// The public feed.
+///
+/// A3.1: no tenant column and no tenant argument — posts are a flat, server-wide collection.
+///
+/// Two filters beyond the old `status != 'withdrawn'`:
+/// `visibility = 'public'` (a `private` post is "visible to nobody but its author", and this
+/// route has no authenticated caller to compare against), and the two moderation statuses —
+/// `db/reports.rs` sets `status = 'hidden'` when a report is upheld, and the old predicate put
+/// the hidden post straight back in the feed.
 pub async fn list(
     pool: &PgPool,
-    community_id: Uuid,
     kind: Option<String>,
     category: Option<String>,
     status: Option<String>,
     q: Option<String>,
 ) -> Result<Vec<Post>> {
     let search = q.map(|s| format!("%{}%", s));
-    let rows = sqlx::query_as::<_, PostRow>(
-        r#"SELECT id, community_id, author_id, kind, category, title, body,
-           location_name, location_lat, location_lon, urgency, quantity, status,
-           visibility, expires_at, tags, contact_method, images, verified_by, verified_at,
-           federated_id, origin_node, created_at, updated_at
+    let rows = sqlx::query_as::<_, PostRow>(&format!(
+        r#"SELECT {POST_COLUMNS}
            FROM posts
-           WHERE community_id = $1
-           AND status != 'withdrawn'
-           AND ($2::text IS NULL OR kind = $2)
-           AND ($3::text IS NULL OR category = $3)
-           AND ($4::text IS NULL OR status = $4)
-           AND ($5::text IS NULL OR title ILIKE $5 OR body ILIKE $5)
+           WHERE status NOT IN ('withdrawn', 'hidden', 'flagged')
+           AND visibility = 'public'
+           AND ($1::text IS NULL OR kind = $1)
+           AND ($2::text IS NULL OR category = $2)
+           AND ($3::text IS NULL OR status = $3)
+           AND ($4::text IS NULL OR title ILIKE $4 OR body ILIKE $4)
            ORDER BY
              CASE WHEN urgency = 'critical' THEN 0
                   WHEN urgency = 'high' THEN 1
                   WHEN urgency = 'medium' THEN 2
                   ELSE 3 END,
-             created_at DESC"#,
-    )
-    .bind(community_id)
+             created_at DESC"#
+    ))
     .bind(kind)
     .bind(category)
     .bind(status)
@@ -44,69 +57,67 @@ pub async fn list(
     Ok(rows.into_iter().map(Into::into).collect())
 }
 
-pub async fn get(pool: &PgPool, id: Uuid) -> Result<Post> {
-    let row = sqlx::query_as::<_, PostRow>(
-        r#"SELECT id, community_id, author_id, kind, category, title, body,
-           location_name, location_lat, location_lon, urgency, quantity, status,
-           visibility, expires_at, tags, contact_method, images, verified_by, verified_at,
-           federated_id, origin_node, created_at, updated_at
-           FROM posts WHERE id = $1"#,
-    )
+/// `Ok(None)` rather than an error, so the caller can answer 404 instead of 500.
+pub async fn get(pool: &PgPool, id: Uuid) -> Result<Option<Post>> {
+    let row = sqlx::query_as::<_, PostRow>(&format!(
+        "SELECT {POST_COLUMNS} FROM posts WHERE id = $1"
+    ))
     .bind(id)
     .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| anyhow!("post not found"))?;
+    .await?;
 
-    Ok(row.into())
+    Ok(row.map(Into::into))
 }
 
-pub async fn create(
-    pool: &PgPool,
-    community_id: Uuid,
-    author_id: Uuid,
-    input: CreatePost,
-) -> Result<Post> {
+pub async fn create(pool: &PgPool, author_id: Uuid, input: CreatePost) -> Result<Post> {
     let id = Uuid::now_v7();
     let now = Utc::now();
-    let kind = serde_json::to_string(&input.kind)?.trim_matches('"').to_string();
-    let category = serde_json::to_string(&input.category)?.trim_matches('"').to_string();
-    let urgency = input.urgency.as_ref().map(|u| {
-        serde_json::to_string(u).unwrap_or_default().trim_matches('"').to_string()
-    });
-    let visibility = match input.visibility.unwrap_or(Visibility::Federated) {
-        Visibility::Public => "public".to_string(),
-        Visibility::Federated => "federated".to_string(),
-        Visibility::Private => "private".to_string(),
-    };
+
+    // SPEC P4: the DB string comes from the enum itself. The old code round-tripped through
+    // `serde_json::to_string` and trimmed the quotes off, which put the wire format in charge of
+    // what lands in a CHECK-constrained column.
+    let kind = input.kind.as_str();
+    let urgency = input.urgency.map(|u| u.as_str());
+    let visibility = input.visibility.unwrap_or(Visibility::Public).as_str();
+    let item_condition = input.item_condition.map(|c| c.as_str());
     let tags = input.tags.unwrap_or_default();
 
     sqlx::query(
-        r#"INSERT INTO posts (id, community_id, author_id, kind, category, title, body,
+        r#"INSERT INTO posts (id, author_id, kind, category, title, body,
            location_name, location_lat, location_lon, urgency, quantity, status,
-           visibility, expires_at, tags, contact_method, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'active',$13,$14,$15,$16,$17,$17)"#,
+           visibility, expires_at, tags, contact_method,
+           market_listed, price_cents, currency, price_negotiable, item_condition,
+           created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'active',$12,$13,$14,$15,
+                   $16,$17,$18,$19,$20,$21,$21)"#,
     )
     .bind(id)
-    .bind(community_id)
     .bind(author_id)
-    .bind(&kind)
-    .bind(&category)
+    .bind(kind)
+    .bind(&input.category)
     .bind(&input.title)
     .bind(&input.body)
     .bind(&input.location_name)
     .bind(input.location_lat)
     .bind(input.location_lon)
-    .bind(&urgency)
+    .bind(urgency)
     .bind(input.quantity)
-    .bind(&visibility)
+    .bind(visibility)
     .bind(input.expires_at)
     .bind(&tags)
     .bind(&input.contact_method)
+    .bind(input.market_listed)
+    .bind(input.price_cents)
+    .bind(&input.currency)
+    .bind(input.price_negotiable)
+    .bind(item_condition)
     .bind(now)
     .execute(pool)
     .await?;
 
-    get(pool, id).await
+    get(pool, id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("post disappeared immediately after insert"))
 }
 
 pub async fn update(
@@ -114,8 +125,8 @@ pub async fn update(
     id: Uuid,
     title: Option<String>,
     body: Option<String>,
-    urgency: Option<String>,
-    status: Option<String>,
+    urgency: Option<Urgency>,
+    status: Option<PostStatus>,
 ) -> Result<()> {
     sqlx::query(
         r#"UPDATE posts SET
@@ -124,13 +135,13 @@ pub async fn update(
            urgency = COALESCE($4, urgency),
            status = COALESCE($5, status),
            updated_at = $6
-           WHERE id = $1"#
+           WHERE id = $1"#,
     )
     .bind(id)
     .bind(title)
     .bind(body)
-    .bind(urgency)
-    .bind(status)
+    .bind(urgency.map(|u| u.as_str()))
+    .bind(status.map(|s| s.as_str()))
     .bind(Utc::now())
     .execute(pool)
     .await?;
@@ -149,7 +160,6 @@ pub async fn withdraw(pool: &PgPool, id: Uuid) -> Result<()> {
 #[derive(FromRow)]
 struct PostRow {
     id: Uuid,
-    community_id: Uuid,
     author_id: Uuid,
     kind: String,
     category: String,
@@ -168,8 +178,13 @@ struct PostRow {
     images: Option<Vec<String>>,
     verified_by: Option<Uuid>,
     verified_at: Option<chrono::DateTime<Utc>>,
-    federated_id: Option<String>,
-    origin_node: Option<String>,
+    market_listed: bool,
+    price_cents: Option<i64>,
+    currency: Option<String>,
+    price_negotiable: bool,
+    item_condition: Option<String>,
+    sold_at: Option<chrono::DateTime<Utc>>,
+    buyer_id: Option<Uuid>,
     created_at: chrono::DateTime<Utc>,
     updated_at: chrono::DateTime<Utc>,
 }
@@ -178,60 +193,122 @@ impl From<PostRow> for Post {
     fn from(r: PostRow) -> Self {
         Post {
             id: r.id,
-            community_id: r.community_id,
             author_id: r.author_id,
-            kind: match r.kind.as_str() {
-                "resource" => PostKind::Resource,
-                "need" => PostKind::Need,
-                "offer" => PostKind::Offer,
-                _ => PostKind::Need,
-            },
-            category: match r.category.as_str() {
-                "food" => Category::Food,
-                "shelter" => Category::Shelter,
-                "health" => Category::Health,
-                "transport" => Category::Transport,
-                "education" => Category::Education,
-                "labor" => Category::Labor,
-                "legal" => Category::Legal,
-                _ => Category::Other,
-            },
+            // SPEC P4 again, on the way back out. The hand-written match this replaces knew
+            // three kinds and folded everything else — including `listing` and `want`, which the
+            // schema has allowed since A1.1 — into `Need`, so a marketplace listing came back
+            // over the wire as an aid need.
+            kind: PostKind::parse(&r.kind).unwrap_or(PostKind::Need),
+            category: r.category,
+            category_label: None,
             title: r.title,
             body: r.body,
             location_name: r.location_name,
             location_lat: r.location_lat,
             location_lon: r.location_lon,
-            urgency: r.urgency.and_then(|u| match u.as_str() {
-                "critical" => Some(Urgency::Critical),
-                "high" => Some(Urgency::High),
-                "medium" => Some(Urgency::Medium),
-                "low" => Some(Urgency::Low),
-                _ => None,
-            }),
+            urgency: r.urgency.as_deref().and_then(Urgency::parse),
             quantity: r.quantity,
-            status: match r.status.as_str() {
-                "active" => PostStatus::Active,
-                "matched" => PostStatus::Matched,
-                "fulfilled" => PostStatus::Fulfilled,
-                "expired" => PostStatus::Expired,
-                "withdrawn" => PostStatus::Withdrawn,
-                _ => PostStatus::Active,
-            },
-            visibility: match r.visibility.as_str() {
-                "public" => Visibility::Public,
-                "private" => Visibility::Private,
-                _ => Visibility::Federated,
-            },
+            status: PostStatus::parse(&r.status).unwrap_or(PostStatus::Active),
+            visibility: Visibility::parse(&r.visibility).unwrap_or(Visibility::Public),
             expires_at: r.expires_at,
             tags: r.tags.unwrap_or_default(),
             contact_method: r.contact_method,
             images: r.images.unwrap_or_default(),
             verified_by: r.verified_by,
             verified_at: r.verified_at,
-            federated_id: r.federated_id,
-            origin_node: r.origin_node,
+            market_listed: r.market_listed,
+            price_cents: r.price_cents,
+            currency: r.currency,
+            price_negotiable: r.price_negotiable,
+            item_condition: r.item_condition.as_deref().and_then(ItemCondition::parse),
+            sold_at: r.sold_at,
+            buyer_id: r.buyer_id,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(kind: &str) -> PostRow {
+        let now = Utc::now();
+        PostRow {
+            id: Uuid::now_v7(),
+            author_id: Uuid::now_v7(),
+            kind: kind.to_string(),
+            category: "food".to_string(),
+            title: "t".to_string(),
+            body: None,
+            location_name: None,
+            location_lat: None,
+            location_lon: None,
+            urgency: None,
+            quantity: None,
+            status: "active".to_string(),
+            visibility: "public".to_string(),
+            expires_at: None,
+            tags: None,
+            contact_method: None,
+            images: None,
+            verified_by: None,
+            verified_at: None,
+            market_listed: false,
+            price_cents: None,
+            currency: None,
+            price_negotiable: false,
+            item_condition: None,
+            sold_at: None,
+            buyer_id: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// The bug the `PostKind::parse` switch fixes: `listing` and `want` are legal in the schema
+    /// and were being served as `need`.
+    #[test]
+    fn every_kind_the_schema_allows_survives_the_row_conversion() {
+        for kind in PostKind::ALL {
+            let post: Post = row(kind.as_str()).into();
+            assert_eq!(post.kind, *kind, "kind {:?} did not round-trip", kind);
+        }
+    }
+
+    #[test]
+    fn the_marketplace_facet_comes_from_the_row_not_from_a_hardcoded_default() {
+        let mut r = row("listing");
+        r.market_listed = true;
+        r.price_cents = Some(2500);
+        r.currency = Some("EUR".to_string());
+        r.price_negotiable = true;
+        r.item_condition = Some("like_new".to_string());
+
+        let post: Post = r.into();
+        assert!(post.market_listed);
+        assert_eq!(post.price_cents, Some(2500));
+        assert_eq!(post.currency.as_deref(), Some("EUR"));
+        assert!(post.price_negotiable);
+        assert_eq!(post.item_condition, Some(ItemCondition::LikeNew));
+    }
+
+    /// A value no enum knows must not panic and must not silently become a different valid one
+    /// in a way that changes meaning; `need`/`active`/`public` are the inert defaults.
+    #[test]
+    fn an_unrecognised_column_value_degrades_instead_of_panicking() {
+        let mut r = row("something_new");
+        r.status = "something_new".to_string();
+        r.visibility = "something_new".to_string();
+        r.urgency = Some("something_new".to_string());
+        r.item_condition = Some("something_new".to_string());
+
+        let post: Post = r.into();
+        assert_eq!(post.kind, PostKind::Need);
+        assert_eq!(post.status, PostStatus::Active);
+        assert_eq!(post.visibility, Visibility::Public);
+        assert_eq!(post.urgency, None);
+        assert_eq!(post.item_condition, None);
     }
 }

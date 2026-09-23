@@ -2,9 +2,8 @@
 	import '../app.css';
 	import '$lib/design/tokens.css';
 	import { onMount } from 'svelte';
-	import Onboarding from '$lib/components/Onboarding.svelte';
 	import SearchBar from '$lib/components/SearchBar.svelte';
-	import { auth, isAuthenticated, getToken, refreshRole, initAuth, showOnboarding } from '$lib/stores/auth';
+	import { auth, isAuthenticated, getToken, refreshRole, initAuth } from '$lib/stores/auth';
 	import { serverState, getActiveServer } from '$lib/stores/server';
 	import { initTheme } from '$lib/stores/theme';
 
@@ -115,7 +114,7 @@
 			{/if}
 			<a href="/connect" onclick={closeMenu}>Connect</a>
 			{#if $serverState.active && !$auth.servers?.[$serverState.active]}
-				<button class="join-link" onclick={() => { closeMenu(); showOnboarding.set(true); }}>Join</button>
+				<a href="/account/signup" class="join-link" onclick={closeMenu}>Join</a>
 			{/if}
 			{#if $serverState.active && $auth.servers?.[$serverState.active]}
 				<a href="/account" class="identity" onclick={closeMenu}>{$auth.servers[$serverState.active].displayName}</a>
@@ -142,8 +141,6 @@
 		<button class="dismiss-btn" onclick={() => showInstall = false}>&times;</button>
 	</div>
 {/if}
-
-<Onboarding />
 
 <style>
 	header {
@@ -272,6 +269,9 @@
 	}
 
 	.join-link {
+		/* A2b turned this from a <button> into an <a>, so it inherits anchor defaults now. */
+		display: inline-block;
+		text-decoration: none;
 		background: var(--accent);
 		color: var(--text-on-accent);
 		font-size: 0.8rem;

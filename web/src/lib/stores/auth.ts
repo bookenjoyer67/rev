@@ -1,110 +1,113 @@
 import { writable, get } from 'svelte/store';
+import { goto } from '$app/navigation';
 import { getActiveServer } from './server';
-import { generateFullKeypair, createKeyBundle, recoverFromBundle, computeRecoveryId, generateRecoveryCode, hashRecoveryCode, deriveWrapKey, wrapAuthState, unwrapAuthState, bytesToBase64, signRegisterChallenge } from '$lib/crypto';
+import {
+	generateIdentityKeypair,
+	generateSaltB64,
+	deriveVerifier,
+	wrapSecret,
+	unwrapSecret,
+	generateRecoveryCode,
+	normalizeRecoveryCode,
+	type IdentityKeypair,
+} from '$lib/crypto';
 
+/**
+ * Auth state, A2b shape.
+ *
+ * Two storage tiers, deliberately:
+ *
+ *  - `localStorage` keeps only what is not secret-bearing beyond the session token itself: the
+ *    opaque bearer token, the user id, the display name, the role. The server stores only a
+ *    SHA-256 of the token, and revoking a session takes effect on its next request, so this is
+ *    recoverable state rather than a credential of lasting value.
+ *  - the x25519 secret is unwrapped at sign-in and held in memory, mirrored into `sessionStorage`
+ *    so a page reload inside the same tab does not silently stop decrypting messages. It is never
+ *    written to `localStorage` and is dropped on sign-out.
+ *
+ * What is gone from the previous version: the second-secret prompt. Accounts used to carry a
+ * separate "recovery phrase" that had to be typed again on every reload before anything could be
+ * read, and which most accounts never set at all. The password is now the only thing that unwraps
+ * the key, and it does so automatically at login.
+ */
 interface PerServerAuth {
 	token: string;
 	userId: string;
 	displayName: string;
 	role: string;
-}
-
-interface KeyPair {
-	ed25519PublicKey: string;
-	ed25519SecretKey: string;
-	x25519PublicKey: string;
-	x25519SecretKey: string;
-}
-
-let _wrapKey: string | null = null;
-let _passphrase: string | null = null;
-
-export function unlockAuth(passphrase: string) {
-	_passphrase = passphrase;
-	_wrapKey = null;
-}
-
-export function lockAuth() {
-	_passphrase = null;
-	_wrapKey = null;
-	sessionStorage.removeItem(SESSION_KEY);
-}
-
-async function getWrapKey(): Promise<string | null> {
-	if (_wrapKey) return _wrapKey;
-	if (!_passphrase) return null;
-	const salt = localStorage.getItem(SALT_KEY);
-	if (!salt) {
-		const newSalt = bytesToBase64(crypto.getRandomValues(new Uint8Array(32)));
-		localStorage.setItem(SALT_KEY, newSalt);
-		_wrapKey = await deriveWrapKey(_passphrase, newSalt);
-		return _wrapKey;
-	}
-	_wrapKey = await deriveWrapKey(_passphrase, salt);
-	return _wrapKey;
+	email?: string;
+	emailVerified?: boolean;
 }
 
 interface AuthState {
-	keypair: KeyPair | null;
+	keypair: IdentityKeypair | null;
 	servers: Record<string, PerServerAuth>;
 }
 
 const STORAGE_KEY = 'komun_auth';
-const SALT_KEY = 'komun_auth_salt';
 const SESSION_KEY = 'komun_auth_session';
-
-async function loadFromStorage(): Promise<AuthState> {
-	if (typeof localStorage === 'undefined') return { keypair: null, servers: {} };
-
-	const sessionRaw = sessionStorage.getItem(SESSION_KEY);
-	if (sessionRaw) {
-		try { return JSON.parse(sessionRaw); } catch { return { keypair: null, servers: {} }; }
-	}
-
-	const raw = localStorage.getItem(STORAGE_KEY);
-	if (!raw) return { keypair: null, servers: {} };
-
-	const wrapKey = await getWrapKey();
-	if (!wrapKey) return { keypair: null, servers: {} };
-
-	try {
-		const decrypted = await unwrapAuthState(raw, wrapKey);
-		const parsed = JSON.parse(decrypted);
-		if (!parsed.servers || typeof parsed.servers !== 'object') {
-			return { keypair: null, servers: {} };
-		}
-		if (parsed.keypair && !parsed.keypair.x25519SecretKey) {
-			return { keypair: null, servers: {} };
-		}
-		sessionStorage.setItem(SESSION_KEY, decrypted);
-		return parsed;
-	} catch {
-		return { keypair: null, servers: {} };
-	}
-}
-
-async function saveToStorage(state: AuthState) {
-	if (typeof localStorage === 'undefined') return;
-	const json = JSON.stringify(state);
-	sessionStorage.setItem(SESSION_KEY, json);
-	const wrapKey = await getWrapKey();
-	if (wrapKey) {
-		const encrypted = await wrapAuthState(json, wrapKey);
-		localStorage.setItem(STORAGE_KEY, encrypted);
-	}
-}
 
 export const auth = writable<AuthState>({ keypair: null, servers: {} });
 
+function emptyState(): AuthState {
+	return { keypair: null, servers: {} };
+}
+
+function loadFromStorage(): AuthState {
+	if (typeof localStorage === 'undefined') return emptyState();
+
+	let servers: Record<string, PerServerAuth> = {};
+	const raw = localStorage.getItem(STORAGE_KEY);
+	if (raw) {
+		try {
+			const parsed = JSON.parse(raw);
+			if (parsed && typeof parsed.servers === 'object' && parsed.servers) {
+				servers = parsed.servers;
+			}
+		} catch {
+			// A corrupt blob is not worth a crash; the user signs in again.
+		}
+	}
+
+	let keypair: IdentityKeypair | null = null;
+	const sessionRaw = sessionStorage.getItem(SESSION_KEY);
+	if (sessionRaw) {
+		try {
+			const parsed = JSON.parse(sessionRaw);
+			if (parsed?.publicKey && parsed?.secretKey) keypair = parsed;
+		} catch {
+			// same
+		}
+	}
+
+	return { keypair, servers };
+}
+
+function saveToStorage(state: AuthState) {
+	if (typeof localStorage === 'undefined') return;
+	localStorage.setItem(STORAGE_KEY, JSON.stringify({ servers: state.servers }));
+	if (state.keypair) {
+		sessionStorage.setItem(SESSION_KEY, JSON.stringify(state.keypair));
+	} else {
+		sessionStorage.removeItem(SESSION_KEY);
+	}
+}
+
 let _initPromise: Promise<void> | null = null;
-export async function initAuth(passphrase?: string): Promise<void> {
+
+export async function initAuth(): Promise<void> {
 	if (_initPromise) return _initPromise;
-	if (passphrase) unlockAuth(passphrase);
-	_initPromise = loadFromStorage().then((state) => {
-		auth.set(state);
-		auth.subscribe((s) => { saveToStorage(s); });
+	_initPromise = Promise.resolve().then(() => {
+		auth.set(loadFromStorage());
+		auth.subscribe((s) => saveToStorage(s));
 	});
 	return _initPromise;
+}
+
+/** Forget the in-memory key without touching the session. Used when locking a shared device. */
+export function lockAuth() {
+	auth.update((s) => ({ ...s, keypair: null }));
+	if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(SESSION_KEY);
 }
 
 export function getActiveAuth(): PerServerAuth | null {
@@ -126,186 +129,519 @@ export function getDisplayName(): string | null {
 }
 
 export function getEncryptionSecretKey(): string | null {
-	return get(auth).keypair?.x25519SecretKey || null;
+	return get(auth).keypair?.secretKey || null;
 }
 
 export function getEncryptionPublicKey(): string | null {
-	return get(auth).keypair?.x25519PublicKey || null;
+	return get(auth).keypair?.publicKey || null;
 }
 
-export function getPublicKey(): string | null {
-	return get(auth).keypair?.ed25519PublicKey || null;
+export function isSuperadmin(): boolean {
+	return getActiveAuth()?.role === 'superadmin';
 }
 
-export async function register(displayName: string, passphrase?: string): Promise<{ ok: boolean; recoveryCode?: string }> {
-	const server = getActiveServer();
-	if (!server) return { ok: false };
+export function isEmailVerified(): boolean {
+	return getActiveAuth()?.emailVerified === true;
+}
 
-	let state = get(auth);
-	if (!state.keypair) {
-		const kp = await generateFullKeypair();
-		state = { ...state, keypair: kp };
-		auth.set(state);
+// ---------------------------------------------------------------------------
+// plumbing
+// ---------------------------------------------------------------------------
+
+export interface AuthResult {
+	ok: boolean;
+	error?: string;
+	/** Present exactly once, on the calls that mint one. Never returned by the server. */
+	recoveryCode?: string;
+}
+
+/** Pull the server's error message out of a failed response, falling back to the status. */
+async function errorFrom(res: Response): Promise<string> {
+	try {
+		const data = await res.json();
+		if (typeof data?.error === 'string') return data.error;
+		if (typeof data?.message === 'string') return data.message;
+	} catch {
+		// non-JSON body
 	}
+	if (res.status === 429) return 'Too many attempts. Wait a minute and try again.';
+	return `Request failed (${res.status})`;
+}
 
-	const { challenge, signature } = await signRegisterChallenge(state.keypair!.ed25519SecretKey);
-
-	const body: Record<string, string> = {
-		display_name: displayName,
-		public_key: state.keypair!.ed25519PublicKey,
-		challenge,
-		signature,
-		encryption_public_key: state.keypair!.x25519PublicKey,
-	};
-
-	let recoveryCode: string | undefined;
-
-	if (passphrase && passphrase.length > 0) {
-		const bundle = await createKeyBundle(
-			state.keypair!.ed25519SecretKey,
-			state.keypair!.x25519SecretKey,
-			passphrase
-		);
-		body.encrypted_key_bundle = bundle.encryptedBundle;
-		body.bundle_salt = bundle.salt;
-		body.recovery_id = bundle.recoveryId;
-
-		recoveryCode = await generateRecoveryCode();
-		body.recovery_code_hash = await hashRecoveryCode(recoveryCode);
-	}
-
-	const res = await fetch(`${server}/api/auth/register`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body),
-	});
-
-	if (!res.ok) return { ok: false };
-
-	const data = await res.json();
+function storeSession(server: string, data: Record<string, unknown>, email?: string) {
 	auth.update((s) => ({
 		...s,
 		servers: {
 			...s.servers,
 			[server]: {
-				token: data.token,
-				userId: data.user_id,
-				displayName: data.display_name,
-				role: data.role || 'user',
+				token: data.token as string,
+				userId: data.user_id as string,
+				displayName: data.display_name as string,
+				role: (data.role as string) || 'user',
+				email,
+				emailVerified: data.email_verified === true,
 			},
 		},
 	}));
-
-	if (passphrase && passphrase.length > 0) {
-		unlockAuth(passphrase);
-	}
-
-	return { ok: true, recoveryCode };
 }
 
-export function isSuperadmin(): boolean {
-	const auth_data = getActiveAuth();
-	return auth_data?.role === 'superadmin';
+function setKeypair(keypair: IdentityKeypair | null) {
+	auth.update((s) => ({ ...s, keypair }));
 }
 
-export async function recover(serverUrl: string, passphrase: string, recoveryCode?: string): Promise<boolean> {
+/**
+ * The account's x25519 public key.
+ *
+ * Sign-in returns the wrapped secret but not the public half, and the wasm bindings expose no
+ * secret-to-public derivation, so it is read back from the account's own key endpoint. A2b.4:
+ * that endpoint no longer returns a `public_key` field — the signature key it described is gone —
+ * and `encryption_public_key` is the only key a caller has any use for.
+ */
+async function fetchOwnPublicKey(server: string, userId: string, token: string): Promise<string> {
+	const res = await fetch(`${server}/api/auth/users/${userId}/keys`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) return '';
+	const data = await res.json();
+	return data.encryption_public_key || '';
+}
+
+/** The public salt an account's verifier is derived under. */
+async function fetchAuthSalt(server: string, email: string): Promise<string | null> {
+	const res = await fetch(`${server}/api/auth/salt?email=${encodeURIComponent(email)}`);
+	if (!res.ok) return null;
+	const data = await res.json();
+	return data.auth_salt || null;
+}
+
+// ---------------------------------------------------------------------------
+// signup / signin
+// ---------------------------------------------------------------------------
+
+export interface SignupInput {
+	email: string;
+	displayName: string;
+	password: string;
+	inviteCode?: string;
+}
+
+/**
+ * Create an account.
+ *
+ * Everything secret is derived in this function and most of it stays here: the password itself
+ * never leaves, and neither does the recovery code. What crosses the wire is one Argon2id output
+ * (the verifier) and two ciphertexts wrapping the same x25519 secret — one under the password, one
+ * under the recovery code. The code is returned to the caller so it can be shown once; it is not
+ * stored anywhere, and no endpoint will ever hand it back.
+ */
+export async function signup(input: SignupInput): Promise<AuthResult> {
+	const server = getActiveServer();
+	if (!server) return { ok: false, error: 'No server selected' };
+
 	try {
-		const recoveryId = await computeRecoveryId(passphrase);
+		const keypair = await generateIdentityKeypair();
+		const authSalt = await generateSaltB64();
+		const verifier = await deriveVerifier(input.password, authSalt);
 
-		const body: Record<string, string> = { recovery_id: recoveryId };
-		if (recoveryCode) {
-			body.recovery_code_hash = await hashRecoveryCode(recoveryCode);
+		const wrapped = await wrapSecret(keypair.secretKey, input.password);
+		const recoveryCode = await generateRecoveryCode();
+		const recoveryWrapped = await wrapSecret(keypair.secretKey, recoveryCode);
+
+		const res = await fetch(`${server}/api/auth/signup`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				email: input.email.trim(),
+				display_name: input.displayName.trim(),
+				verifier,
+				auth_salt: authSalt,
+				password_length: input.password.length,
+				encryption_public_key: keypair.publicKey,
+				encrypted_key_bundle: wrapped.bundle,
+				bundle_salt: wrapped.salt,
+				encrypted_recovery_bundle: recoveryWrapped.bundle,
+				recovery_bundle_salt: recoveryWrapped.salt,
+				invite_code: input.inviteCode || null,
+			}),
+		});
+
+		if (!res.ok) return { ok: false, error: await errorFrom(res) };
+
+		const data = await res.json();
+		setKeypair(keypair);
+		storeSession(server, data, input.email.trim());
+		return { ok: true, recoveryCode };
+	} catch (e) {
+		return { ok: false, error: e instanceof Error ? e.message : 'Signup failed' };
+	}
+}
+
+/**
+ * Sign in, and unlock the encryption key in the same step.
+ *
+ * The unwrap is why there is no separate "unlock" prompt any more: the password is already in hand
+ * at this point, so deriving the wrap key and opening the bundle costs one extra Argon2id pass and
+ * nothing the user has to do. A bundle that fails to open is reported, not swallowed — the session
+ * is still valid, but messages will not decrypt and the user should know why.
+ */
+export async function login(
+	email: string,
+	password: string,
+	deviceLabel?: string
+): Promise<AuthResult> {
+	const server = getActiveServer();
+	if (!server) return { ok: false, error: 'No server selected' };
+
+	try {
+		const authSalt = await fetchAuthSalt(server, email.trim());
+		if (!authSalt) return { ok: false, error: 'Could not start sign-in. Try again.' };
+
+		const verifier = await deriveVerifier(password, authSalt);
+
+		const res = await fetch(`${server}/api/auth/signin`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				email: email.trim(),
+				verifier,
+				device_label: deviceLabel || null,
+			}),
+		});
+
+		if (!res.ok) return { ok: false, error: await errorFrom(res) };
+
+		const data = await res.json();
+		storeSession(server, data, email.trim());
+
+		if (data.encrypted_key_bundle && data.bundle_salt) {
+			try {
+				const secretKey = await unwrapSecret(
+					data.encrypted_key_bundle,
+					data.bundle_salt,
+					password
+				);
+				const publicKey = await fetchOwnPublicKey(server, data.user_id, data.token);
+				setKeypair({ publicKey, secretKey });
+			} catch {
+				return {
+					ok: true,
+					error: 'Signed in, but your encryption key could not be unlocked on this device.',
+				};
+			}
 		}
 
-		const res = await fetch(`${serverUrl}/api/auth/recover`, {
+		return { ok: true };
+	} catch (e) {
+		return { ok: false, error: e instanceof Error ? e.message : 'Sign-in failed' };
+	}
+}
+
+// ---------------------------------------------------------------------------
+// email verification
+// ---------------------------------------------------------------------------
+
+export async function resendVerification(email: string): Promise<AuthResult> {
+	const server = getActiveServer();
+	if (!server) return { ok: false, error: 'No server selected' };
+	const res = await fetch(`${server}/api/auth/resend-verification`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email: email.trim() }),
+	});
+	return res.ok ? { ok: true } : { ok: false, error: await errorFrom(res) };
+}
+
+export async function verifyEmail(token: string): Promise<AuthResult> {
+	const server = getActiveServer();
+	if (!server) return { ok: false, error: 'No server selected' };
+	const res = await fetch(`${server}/api/auth/verify`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ token }),
+	});
+	if (!res.ok) return { ok: false, error: await errorFrom(res) };
+
+	const server_ = server;
+	auth.update((s) => {
+		const existing = s.servers[server_];
+		if (!existing) return s;
+		return { ...s, servers: { ...s.servers, [server_]: { ...existing, emailVerified: true } } };
+	});
+	return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// password reset
+// ---------------------------------------------------------------------------
+
+/**
+ * Ask for a reset mail. Always reports success: the response is identical for a known and an
+ * unknown address, and echoing "no such account" back to the form would turn it into a membership
+ * oracle for anyone with a list of email addresses.
+ */
+export async function requestPasswordReset(email: string): Promise<AuthResult> {
+	const server = getActiveServer();
+	if (!server) return { ok: false, error: 'No server selected' };
+	const res = await fetch(`${server}/api/auth/password-reset`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email: email.trim() }),
+	});
+	if (!res.ok && res.status !== 404) return { ok: false, error: await errorFrom(res) };
+	return { ok: true };
+}
+
+export interface ResetInput {
+	token: string;
+	password: string;
+	/** The 12-word code. Omitted means the old key material is written off. */
+	recoveryCode?: string;
+}
+
+/**
+ * Finish a reset.
+ *
+ * Two genuinely different outcomes, and the difference is not cosmetic:
+ *
+ *  - **With the recovery code**, the code unwraps the existing x25519 secret, which is re-wrapped
+ *    under the new password. The account keeps its identity key, so everything sent to it before
+ *    the reset stays readable.
+ *  - **Without it**, that secret is unrecoverable — by anyone, which is the property the design is
+ *    paying for. A fresh keypair is generated and published, and a fresh recovery code is minted
+ *    and returned for display. Old messages stay encrypted to a key nobody holds; new ones work.
+ *    The new public key has to go up in the same request, or correspondents would keep encrypting
+ *    to the dead key and even post-reset messages would be unreadable.
+ */
+export async function confirmPasswordReset(input: ResetInput): Promise<AuthResult> {
+	const server = getActiveServer();
+	if (!server) return { ok: false, error: 'No server selected' };
+
+	const body: Record<string, unknown> = {
+		token: input.token,
+		password_length: input.password.length,
+	};
+
+	let mintedRecoveryCode: string | undefined;
+
+	try {
+		const authSalt = await generateSaltB64();
+		body.auth_salt = authSalt;
+		body.verifier = await deriveVerifier(input.password, authSalt);
+
+		const code = input.recoveryCode ? normalizeRecoveryCode(input.recoveryCode) : '';
+
+		if (code) {
+			const res = await fetch(
+				`${server}/api/auth/password-reset/bundle?token=${encodeURIComponent(input.token)}`
+			);
+			if (!res.ok) return { ok: false, error: await errorFrom(res) };
+			const stored = await res.json();
+			if (!stored.encrypted_recovery_bundle || !stored.recovery_bundle_salt) {
+				return { ok: false, error: 'This account has no recovery code on file.' };
+			}
+
+			let secretKey: string;
+			try {
+				secretKey = await unwrapSecret(
+					stored.encrypted_recovery_bundle,
+					stored.recovery_bundle_salt,
+					code
+				);
+			} catch {
+				return { ok: false, error: 'That recovery code does not match this account.' };
+			}
+
+			const wrapped = await wrapSecret(secretKey, input.password);
+			body.encrypted_key_bundle = wrapped.bundle;
+			body.bundle_salt = wrapped.salt;
+		} else {
+			const keypair = await generateIdentityKeypair();
+			const wrapped = await wrapSecret(keypair.secretKey, input.password);
+			mintedRecoveryCode = await generateRecoveryCode();
+			const recoveryWrapped = await wrapSecret(keypair.secretKey, mintedRecoveryCode);
+
+			body.encryption_public_key = keypair.publicKey;
+			body.encrypted_key_bundle = wrapped.bundle;
+			body.bundle_salt = wrapped.salt;
+			body.encrypted_recovery_bundle = recoveryWrapped.bundle;
+			body.recovery_bundle_salt = recoveryWrapped.salt;
+		}
+
+		const res = await fetch(`${server}/api/auth/password-reset/confirm`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(body),
 		});
+		if (!res.ok) return { ok: false, error: await errorFrom(res) };
 
-		if (!res.ok) return false;
+		// Every session was revoked server-side, including any this browser held.
+		lockAuth();
+		auth.update((s) => ({ ...s, servers: {} }));
 
-		const data = await res.json();
-		const keys = await recoverFromBundle(data.encrypted_key_bundle, data.bundle_salt, passphrase);
-
-		const keypair: KeyPair = {
-			ed25519PublicKey: data.public_key,
-			ed25519SecretKey: keys.ed25519Secret,
-			x25519PublicKey: data.encryption_public_key || '',
-			x25519SecretKey: keys.x25519Secret,
-		};
-
-		auth.set({ keypair, servers: {} });
-		unlockAuth(passphrase);
-
-		const { challenge, signature } = await signRegisterChallenge(keypair.ed25519SecretKey);
-
-		const regRes = await fetch(`${serverUrl}/api/auth/register`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				display_name: data.display_name,
-				public_key: data.public_key,
-				challenge,
-				signature,
-				encryption_public_key: data.encryption_public_key,
-			}),
-		});
-
-		if (regRes.ok) {
-			const regData = await regRes.json();
-			auth.update((s) => ({
-				...s,
-				servers: {
-					...s.servers,
-					[serverUrl]: {
-						token: regData.token,
-						userId: regData.user_id,
-						displayName: regData.display_name,
-						role: regData.role || 'user',
-					},
-				},
-			}));
-		}
-
-		return true;
-	} catch {
-		return false;
+		return { ok: true, recoveryCode: mintedRecoveryCode };
+	} catch (e) {
+		return { ok: false, error: e instanceof Error ? e.message : 'Reset failed' };
 	}
 }
 
-export async function setPassphrase(passphrase: string): Promise<boolean> {
+// ---------------------------------------------------------------------------
+// signed-in account management
+// ---------------------------------------------------------------------------
+
+/** The current account's email, from local state or, failing that, `/auth/me`. */
+async function currentEmail(server: string, token: string): Promise<string | null> {
+	const known = getActiveAuth()?.email;
+	if (known) return known;
+	const res = await fetch(`${server}/api/auth/me`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) return null;
+	const data = await res.json();
+	return data.email || null;
+}
+
+/**
+ * Change the password of an account whose password is still known.
+ *
+ * The x25519 secret is not regenerated, only re-wrapped, so the account reads exactly what it read
+ * before. The existing recovery code also survives: it wraps the same secret, and nothing about it
+ * depends on the password.
+ */
+export async function changePassword(
+	currentPassword: string,
+	newPassword: string
+): Promise<AuthResult> {
 	const server = getActiveServer();
-	if (!server) return false;
-	const state = get(auth);
-	if (!state.keypair) return false;
+	const token = getToken();
+	if (!server || !token) return { ok: false, error: 'Not signed in' };
 
 	try {
-		const bundle = await createKeyBundle(
-			state.keypair.ed25519SecretKey,
-			state.keypair.x25519SecretKey,
-			passphrase
-		);
+		const email = await currentEmail(server, token);
+		if (!email) return { ok: false, error: 'Could not read your account details' };
 
-		const res = await fetch(`${server}/api/auth/me`, {
-			method: 'PUT',
-			headers: {
-				'Content-Type': 'application/json',
-				'Authorization': `Bearer ${getToken()}`,
-			},
+		const currentSalt = await fetchAuthSalt(server, email);
+		if (!currentSalt) return { ok: false, error: 'Could not start the change. Try again.' };
+		const currentVerifier = await deriveVerifier(currentPassword, currentSalt);
+
+		const authSalt = await generateSaltB64();
+		const verifier = await deriveVerifier(newPassword, authSalt);
+
+		const body: Record<string, unknown> = {
+			current_verifier: currentVerifier,
+			verifier,
+			auth_salt: authSalt,
+			password_length: newPassword.length,
+		};
+
+		const secretKey = getEncryptionSecretKey();
+		if (secretKey) {
+			const wrapped = await wrapSecret(secretKey, newPassword);
+			body.encrypted_key_bundle = wrapped.bundle;
+			body.bundle_salt = wrapped.salt;
+		}
+
+		const res = await fetch(`${server}/api/auth/password/change`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+			body: JSON.stringify(body),
+		});
+		if (!res.ok) return { ok: false, error: await errorFrom(res) };
+
+		return { ok: true };
+	} catch (e) {
+		return { ok: false, error: e instanceof Error ? e.message : 'Change failed' };
+	}
+}
+
+/**
+ * Mint a replacement recovery code.
+ *
+ * Writing the new wrapping over the old one is the whole revocation: the server never held
+ * anything derived from the previous code, so there is nothing else to invalidate, and a bundle
+ * the old code can open no longer exists.
+ */
+export async function reissueRecoveryCode(currentPassword: string): Promise<AuthResult> {
+	const server = getActiveServer();
+	const token = getToken();
+	if (!server || !token) return { ok: false, error: 'Not signed in' };
+
+	const secretKey = getEncryptionSecretKey();
+	if (!secretKey) {
+		return {
+			ok: false,
+			error: 'Your encryption key is locked on this device. Sign in again first.',
+		};
+	}
+
+	try {
+		const email = await currentEmail(server, token);
+		if (!email) return { ok: false, error: 'Could not read your account details' };
+		const currentSalt = await fetchAuthSalt(server, email);
+		if (!currentSalt) return { ok: false, error: 'Could not start the change. Try again.' };
+
+		const recoveryCode = await generateRecoveryCode();
+		const wrapped = await wrapSecret(secretKey, recoveryCode);
+
+		const res = await fetch(`${server}/api/auth/recovery/reissue`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
 			body: JSON.stringify({
-				encrypted_key_bundle: bundle.encryptedBundle,
-				bundle_salt: bundle.salt,
-				recovery_id: bundle.recoveryId,
+				current_verifier: await deriveVerifier(currentPassword, currentSalt),
+				encrypted_recovery_bundle: wrapped.bundle,
+				recovery_bundle_salt: wrapped.salt,
 			}),
 		});
+		if (!res.ok) return { ok: false, error: await errorFrom(res) };
 
-		if (!res.ok) return false;
-		unlockAuth(passphrase);
-		return true;
-	} catch {
-		return false;
+		return { ok: true, recoveryCode };
+	} catch (e) {
+		return { ok: false, error: e instanceof Error ? e.message : 'Reissue failed' };
 	}
+}
+
+export interface SessionSummary {
+	id: string;
+	device_label: string | null;
+	ip: string | null;
+	created_at: string;
+	last_used_at: string;
+	expires_at: string;
+	current: boolean;
+}
+
+export async function listSessions(): Promise<SessionSummary[]> {
+	const server = getActiveServer();
+	const token = getToken();
+	if (!server || !token) return [];
+	const res = await fetch(`${server}/api/auth/sessions`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) return [];
+	return await res.json();
+}
+
+export async function revokeSession(id: string): Promise<boolean> {
+	const server = getActiveServer();
+	const token = getToken();
+	if (!server || !token) return false;
+	const res = await fetch(`${server}/api/auth/sessions/${id}`, {
+		method: 'DELETE',
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	return res.ok;
+}
+
+export async function revokeOtherSessions(): Promise<number> {
+	const server = getActiveServer();
+	const token = getToken();
+	if (!server || !token) return 0;
+	const res = await fetch(`${server}/api/auth/sessions`, {
+		method: 'DELETE',
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) return 0;
+	const data = await res.json();
+	return data.revoked ?? 0;
 }
 
 export async function updateDisplayName(newName: string): Promise<boolean> {
@@ -316,10 +652,7 @@ export async function updateDisplayName(newName: string): Promise<boolean> {
 	try {
 		const res = await fetch(`${server}/api/auth/me`, {
 			method: 'PUT',
-			headers: {
-				'Content-Type': 'application/json',
-				'Authorization': `Bearer ${token}`,
-			},
+			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
 			body: JSON.stringify({ display_name: newName }),
 		});
 
@@ -343,48 +676,71 @@ export async function refreshRole(): Promise<void> {
 	if (!server || !token) return;
 	try {
 		const res = await fetch(`${server}/api/auth/me`, {
-			headers: { 'Authorization': `Bearer ${token}` }
+			headers: { Authorization: `Bearer ${token}` },
 		});
 		if (!res.ok) return;
 		const data = await res.json();
-		if (data.role) {
-			auth.update((s) => ({
+		auth.update((s) => {
+			const existing = s.servers[server];
+			if (!existing) return s;
+			return {
 				...s,
 				servers: {
 					...s.servers,
-					[server]: { ...s.servers[server], role: data.role },
+					[server]: {
+						...existing,
+						role: data.role || existing.role,
+						email: data.email || existing.email,
+						emailVerified: data.email_verified === true,
+					},
 				},
-			}));
-		}
-	} catch {}
+			};
+		});
+	} catch {
+		// a failed refresh keeps the last known role; the server re-checks on every request anyway
+	}
 }
 
+/** Sign out of the active server, telling it to drop the session rather than just forgetting it. */
 export function logout() {
 	const server = getActiveServer();
 	if (!server) return;
-	sessionStorage.removeItem(SESSION_KEY);
+	const token = getToken();
+	if (token && typeof fetch !== 'undefined') {
+		// Fire-and-forget: the local state goes either way, and a failed call only means the
+		// session expires on its own schedule instead of now.
+		try {
+			fetch(`${server}/api/auth/signout`, {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${token}` },
+			}).catch(() => {});
+		} catch {
+			// no network here; the local sign-out below still happens
+		}
+	}
+	if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(SESSION_KEY);
 	auth.update((s) => {
-		const { [server]: _, ...rest } = s.servers;
-		return { ...s, servers: rest };
+		const { [server]: _removed, ...rest } = s.servers;
+		return { keypair: null, servers: rest };
 	});
 }
 
-let pendingAction: (() => void) | null = null;
-export const showOnboarding = writable(false);
+// ---------------------------------------------------------------------------
+// gating
+// ---------------------------------------------------------------------------
 
+/**
+ * Run `action` if the visitor is signed in, otherwise send them to the sign-in page.
+ *
+ * A3.4 removed the four A2b shims that sat here: `register`, `recover`, `showOnboarding` and
+ * `onAuthComplete`. Signing in is a page now, not a modal, so there is no modal flag to raise and
+ * no completion callback to run afterwards — the deferred `pendingAction` queue went with
+ * `onAuthComplete`, which was its only consumer and which nothing called.
+ */
 export function requireAuth(action: () => void) {
 	if (isAuthenticated()) {
 		action();
-	} else {
-		pendingAction = action;
-		showOnboarding.set(true);
+		return;
 	}
-}
-
-export function onAuthComplete() {
-	showOnboarding.set(false);
-	if (pendingAction) {
-		pendingAction();
-		pendingAction = null;
-	}
+	goto('/account/login');
 }

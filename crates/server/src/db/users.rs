@@ -7,10 +7,8 @@ pub struct UserProfileRow {
     pub display_name: String,
     pub bio: Option<String>,
     pub avatar_path: Option<String>,
-    pub public_key: Vec<u8>,
     pub encryption_public_key: Option<Vec<u8>>,
     pub role: String,
-    pub community_count: i64,
     pub post_count: i64,
     pub verified_post_count: i64,
     pub endorsement_count: i64,
@@ -20,18 +18,20 @@ pub struct UserProfileRow {
 }
 
 pub async fn get_profile(pool: &PgPool, user_id: Uuid) -> Result<Option<UserProfileRow>, sqlx::Error> {
+    // A2a: the previous version joined LATERAL against `members` and selected `u.public_key`,
+    // both of which A1 dropped — so every call failed at runtime with an undefined-column error.
+    // A3.2 removes the two stand-ins A2a left behind: `public_key` (an alias of
+    // `encryption_public_key`, kept only so the response shape did not change mid-flight) and
+    // `community_count` (a literal 0 standing in for the dropped `members` table).
     sqlx::query_as::<_, UserProfileRow>(
         r#"SELECT
-            u.id, u.display_name, u.bio, u.avatar_path, u.public_key, u.encryption_public_key,
+            u.id, u.display_name, u.bio, u.avatar_path,
+            u.encryption_public_key,
             u.role, u.created_at, u.last_seen, u.profile_json,
-            COALESCE(c.community_count, 0) as community_count,
             COALESCE(p.post_count, 0) as post_count,
             COALESCE(v.verified_count, 0) as verified_post_count,
             COALESCE(e.endorsement_count, 0) as endorsement_count
         FROM users u
-        LEFT JOIN LATERAL (
-            SELECT COUNT(*)::bigint as community_count FROM members WHERE user_id = u.id
-        ) c ON true
         LEFT JOIN LATERAL (
             SELECT COUNT(*)::bigint as post_count FROM posts WHERE author_id = u.id
         ) p ON true
