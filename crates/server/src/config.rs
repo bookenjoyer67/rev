@@ -15,6 +15,7 @@ pub struct Config {
     pub admin: AdminConfig,
     pub media: MediaConfig,
     pub relay: RelayConfig,
+    pub geocode: GeocodeConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -37,6 +38,44 @@ impl Default for RelayConfig {
             storage_path: "data/relay".into(),
             max_clients_per_room: 100,
             external_url: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct GeocodeConfig {
+    /// Contact address (email or URL) identifying the operator of this
+    /// deployment, sent to Nominatim in the `User-Agent` header.
+    ///
+    /// Nominatim's usage policy requires the request to identify the
+    /// application *and* give a contact a maintainer actually reads, so set
+    /// this to a real address. Requests may be blocked when it is missing.
+    pub contact: Option<String>,
+}
+
+impl GeocodeConfig {
+    /// The outbound `User-Agent`: identifies this deployment and carries the
+    /// configured contact. Falls back to the historical generic agent when no
+    /// contact is configured, so an unconfigured node keeps working.
+    pub fn user_agent(&self) -> String {
+        match self
+            .contact
+            .as_deref()
+            .map(str::trim)
+            .filter(|contact| !contact.is_empty())
+        {
+            Some(contact) => format!(
+                "Komun/{} (+{}; nominatim proxy)",
+                env!("CARGO_PKG_VERSION"),
+                contact
+            ),
+            None => concat!(
+                "Komun/",
+                env!("CARGO_PKG_VERSION"),
+                " (nominatim proxy; mutual-aid app)"
+            )
+            .to_string(),
         }
     }
 }
@@ -172,6 +211,7 @@ impl Default for Config {
             admin: AdminConfig::default(),
             media: MediaConfig::default(),
             relay: RelayConfig::default(),
+            geocode: GeocodeConfig::default(),
         }
     }
 }
@@ -262,6 +302,11 @@ impl Config {
         };
 
         config.apply_env_overrides();
+
+        tracing::debug!(
+            geocode_user_agent = %config.geocode.user_agent(),
+            "resolved outbound geocode identity"
+        );
 
         if std::env::var("JWT_SECRET").is_err() {
             tracing::warn!(
