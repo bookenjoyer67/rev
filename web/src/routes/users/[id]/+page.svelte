@@ -10,12 +10,14 @@
     let profile = $derived(data.profile);
     let isOwnProfile = $derived(data.isOwnProfile);
     let endorsements = $derived(data.endorsements);
-    let hasEndorsed = $derived(data.hasEndorsed);
     let error = $derived(data.error);
     let copied = $state(false);
     let endorsing = $state(false);
-    let endorsed = $state(data.hasEndorsed);
-    let endCount = $state(data.endorsements?.count || 0);
+    // Both are written optimistically by the endorse handlers and otherwise track the load.
+    // Deriving them (rather than seeding `$state` from a prop, which only ever captured the
+    // first value) keeps them in step with a fresh load — same pattern as `endorsements`.
+    let endorsed = $derived(data.hasEndorsed);
+    let endCount = $derived(data.endorsements?.count || 0);
     let endorseError = $state('');
 
     function copyPublicKey() {
@@ -108,10 +110,7 @@
         {/if}
 
         <div class="stats-row">
-            <div class="stat">
-                <span class="stat-value">{profile.community_count}</span>
-                <span class="stat-label">communities</span>
-            </div>
+            <!-- A3.2 removed `community_count` from `/api/users/{id}`; it rendered as `undefined`. -->
             <div class="stat">
                 <span class="stat-value">{profile.post_count}</span>
                 <span class="stat-label">posts</span>

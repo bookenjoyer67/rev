@@ -44,7 +44,7 @@
 <div class="container">
 	<div class="connect-page">
 		<h1>komun</h1>
-		<p class="tagline">Connect to a server to browse communities and mutual aid.</p>
+		<p class="tagline">Connect to a server to browse mutual aid.</p>
 
 		{#if browseLoading}
 			<p class="browse-status">Loading available servers...</p>
@@ -60,10 +60,9 @@
 									{#if server.description}
 										<span class="server-desc">{server.description}</span>
 									{/if}
-									<span class="server-meta">
-										{#if server.location_name}{server.location_name} &middot; {/if}
-										{server.communities_count} communit{server.communities_count === 1 ? 'y' : 'ies'}
-									</span>
+									{#if server.location_name}
+										<span class="server-meta">{server.location_name}</span>
+									{/if}
 								</div>
 								<span class="server-connect">Connect</span>
 							</button>
@@ -77,7 +76,7 @@
 			<input
 				type="url"
 				bind:value={url}
-				placeholder="https://your-community-server.org"
+				placeholder="https://your-aid-server.org"
 				disabled={loading}
 			/>
 			{#if error}
@@ -95,7 +94,9 @@
 				{#if nodeInfo.location?.name}
 					<span class="location">{nodeInfo.location.name}</span>
 				{/if}
-				<span class="meta">{nodeInfo.communities_count} communities</span>
+				{#if nodeInfo.version}
+					<span class="meta">v{nodeInfo.version}</span>
+				{/if}
 			</div>
 		{/if}
 
@@ -120,7 +121,7 @@
 		</div>
 
 		<p class="footer-note">
-			Don't have a server? Ask your community organizer, or
+			Don't have a server? Ask whoever organizes aid near you, or
 			<a href="https://git.komun.buzz/Book-Enjoyer/rev" target="_blank">run your own</a>.
 		</p>
 	</div>

@@ -11,7 +11,6 @@
 			title: string;
 			kind: string;
 			server_url: string;
-			community_slug: string;
 			author_id?: string;
 		};
 		onClose: () => void;
@@ -19,18 +18,49 @@
 
 	let { post, onClose }: Props = $props();
 
-	let displayName = $state('');
 	let message = $state('');
 	let error = $state('');
 	let loading = $state(false);
 	let success = $state(false);
 	let matchId = $state('');
 
-	let needsIdentity = $derived(!isAuthenticated());
+	/**
+	 * A2a/A3.4 replaced the anonymous device identity with a session: responding takes an
+	 * account, which takes an email and a password, which is a page and not a field in a modal.
+	 * So this branch offers the door rather than pretending to open it here.
+	 */
+	let needsAccount = $derived(!isAuthenticated());
+
+	function goSignUp() {
+		onClose();
+		goto('/account/signup');
+	}
+
+	/**
+	 * A3.3 sealed the wire: `/respond` takes a `ciphertext` and the server never sees plaintext.
+	 * There is deliberately no plaintext fallback — if the recipient's key cannot be fetched the
+	 * response fails loudly instead of quietly shipping a readable "ciphertext".
+	 */
+	async function seal(plaintext: string): Promise<string> {
+		if (!post.author_id) throw new Error('This post has no recipient to encrypt to');
+
+		const mySecret = getEncryptionSecretKey();
+		if (!mySecret) throw new Error('Your encryption key is locked — sign in again to unlock it');
+
+		const server = getActiveServer();
+		const res = await fetch(`${server}/api/auth/users/${post.author_id}/keys`);
+		if (!res.ok) throw new Error('Could not fetch the recipient\'s encryption key');
+
+		const keys = await res.json();
+		if (!keys.encryption_public_key) throw new Error('The recipient has no encryption key yet');
+
+		const sharedKey = await deriveConversationKey(mySecret, keys.encryption_public_key);
+		return encryptMessage(plaintext, sharedKey);
+	}
 
 	async function handleSubmit() {
-		if (needsIdentity && !displayName.trim()) {
-			error = 'Enter your name';
+		if (needsAccount) {
+			goSignUp();
 			return;
 		}
 		if (!message.trim()) {
@@ -46,37 +76,8 @@
 				await connectToServer(post.server_url);
 			}
 
-			if (needsIdentity) {
-				// A3.4 removed the anonymous `register(displayName)` shim. An account needs an
-				// email and a password now, which is a page, not a field in this modal.
-				loading = false;
-				onClose();
-				goto('/account/signup');
-				return;
-			}
-
-			let body = message.trim();
-
-			if (post.author_id) {
-				const mySecret = getEncryptionSecretKey();
-				if (mySecret) {
-					try {
-						const server = getActiveServer();
-						const res = await fetch(`${server}/api/auth/users/${post.author_id}/keys`);
-						if (res.ok) {
-							const keys = await res.json();
-							if (keys.encryption_public_key) {
-								const sharedKey = await deriveConversationKey(mySecret, keys.encryption_public_key);
-								body = await encryptMessage(body, sharedKey);
-							}
-						}
-					} catch {
-						// fall back to plaintext
-					}
-				}
-			}
-
-			const result = await api.posts.respond(post.id, body, post.server_url);
+			const ciphertext = await seal(message.trim());
+			const result = await api.conversations.respond(post.id, ciphertext, post.server_url);
 			matchId = result.match_id;
 			success = true;
 		} catch (e: any) {
@@ -109,30 +110,26 @@
 			<h2>{post.kind === 'need' ? 'Offer help' : 'Request this'}</h2>
 			<p class="post-ref">Re: {post.title}</p>
 
-			<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
-				{#if needsIdentity}
+			{#if needsAccount}
+				<p class="note">Responding is end-to-end encrypted, so it needs an account to hold your key.</p>
+				<button type="button" class="btn-primary" onclick={goSignUp}>Create an account</button>
+			{:else}
+				<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
 					<label>
-						<span>Your name</span>
-						<input type="text" bind:value={displayName} placeholder="What should people call you?" maxlength="50" disabled={loading} />
+						<span>Your message</span>
+						<textarea bind:value={message} placeholder={post.kind === 'need' ? "What can you offer? When/where can you help?" : "What do you need? How can they reach you?"} rows="4" disabled={loading}></textarea>
 					</label>
-				{/if}
 
-				<label>
-					<span>Your message</span>
-					<textarea bind:value={message} placeholder={post.kind === 'need' ? "What can you offer? When/where can you help?" : "What do you need? How can they reach you?"} rows="4" disabled={loading}></textarea>
-				</label>
+					{#if error}
+						<p class="error">{error}</p>
+					{/if}
 
-				{#if error}
-					<p class="error">{error}</p>
-				{/if}
+					<button type="submit" class="btn-primary" disabled={loading}>
+						{loading ? 'Sending...' : 'Send Response'}
+					</button>
+				</form>
 
-				<button type="submit" class="btn-primary" disabled={loading}>
-					{loading ? 'Sending...' : 'Send Response'}
-				</button>
-			</form>
-
-			{#if needsIdentity}
-				<p class="note">No account needed. Your identity is bound to this device.</p>
+				<p class="note">Encrypted to the author's key before it leaves your browser.</p>
 			{/if}
 		{/if}
 	</div>
@@ -196,7 +193,7 @@
 		color: var(--text-muted);
 	}
 
-	input, textarea {
+	textarea {
 		background: var(--bg);
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
@@ -206,7 +203,7 @@
 		font-family: inherit;
 	}
 
-	input:focus, textarea:focus {
+	textarea:focus {
 		outline: none;
 		border-color: var(--accent);
 	}

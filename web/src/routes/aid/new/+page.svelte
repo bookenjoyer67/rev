@@ -1,14 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { requireAuth, getToken } from '$lib/stores/auth';
+	import { requireAuth } from '$lib/stores/auth';
 	import { api } from '$lib/api/client';
-	import { getActiveServer } from '$lib/stores/server';
-	import { onMount } from 'svelte';
 
-	interface Community { slug: string; name: string; }
-
-	let communities: Community[] = $state([]);
-	let selectedCommunity = $state('');
 	let kind = $state('need');
 	let category = $state('other');
 	let title = $state('');
@@ -21,8 +15,6 @@
 	let contactMethod = $state('');
 	let error = $state('');
 	let loading = $state(false);
-	let showPicker = $state(false);
-	let mapIframeSrc: string | null = $state(null);
 	let imageFiles: File[] = $state([]);
 	let imagePreviews: string[] = $state([]);
 
@@ -39,77 +31,13 @@
 		return new Date(Date.now() + days * 86400000).toISOString();
 	}
 
-	onMount(async () => {
-		try {
-			communities = await api.communities.list();
-			if (communities.length > 0) {
-				selectedCommunity = communities[0].slug;
-			}
-		} catch (e) {}
-
-		const server = getActiveServer();
-		if (server) {
-			try {
-				const nodeInfo = await fetch(`${server}/api/node`).then(r => r.json());
-				const relayUrl = nodeInfo.relay_url || '';
-				if (relayUrl) {
-					for (const c of communities) {
-						try {
-							const community = await api.communities.get(c.slug);
-							if (community.map_community_id) {
-								const lat = community.location_lat ?? nodeInfo.location?.lat;
-								const lon = community.location_lon ?? nodeInfo.location?.lon;
-								const zoom = community.location_lat ? '14' : '10';
-								const payload: Record<string, string> = {
-									cid: community.map_community_id,
-									n: community.name,
-									r: relayUrl,
-									pw: 'false',
-								};
-								if (community.map_secret_hex) payload.sk = community.map_secret_hex;
-								if (lat != null && lon != null) {
-									payload.lat = String(lat);
-									payload.lon = String(lon);
-									payload.zoom = zoom;
-								}
-								const b64 = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-								mapIframeSrc = `https://app.piggpin.space/?embed=1&picker=1#community=${b64}`;
-								break;
-							}
-						} catch (_) {}
-					}
-				}
-			} catch (_) {}
-		}
-	});
-
-	function handlePickMessage(event: MessageEvent) {
-		console.log('[rev] ANY msg:', event.origin, typeof event.data, event.data?.type);
-		if (event.origin !== 'https://app.piggpin.space') return;
-		console.log('[rev] pick message:', event.data);
-		if (event.data?.type === 'piggpin:location-picked') {
-			locationLat = event.data.lat;
-			locationLon = event.data.lng;
-			console.log('[rev] picked location:', locationLat, locationLon);
-		}
-	}
-
-	function sendPinDetails() {
-		const iframe = document.querySelector('iframe');
-		if (iframe?.contentWindow) {
-			try {
-				iframe.contentWindow.postMessage({
-					type: 'komun:pin-details',
-					title: title,
-					body: body,
-					kind,
-					category,
-					urgency: kind === 'need' ? urgency : null,
-					contact: contactMethod
-				}, 'https://app.piggpin.space');
-			} catch (_) {}
-		}
-	}
+	/*
+	 * The piggpin `<iframe>` map picker that used to live here is gone. It keyed off
+	 * `community.map_community_id` / `map_secret_hex` and `nodeInfo.relay_url`; a grep of
+	 * `crates/server/src` finds no handler that emits any of the three, so the picker could
+	 * never activate — removing it removes dead code, not a feature. `location_lat` /
+	 * `location_lon` are still sent, so a real picker can set them again later.
+	 */
 
 	function handleImages(e: Event) {
 		const files = (e.target as HTMLInputElement).files;
@@ -132,28 +60,13 @@
 		imagePreviews = imagePreviews.filter((_, j) => j !== i);
 	}
 
-	async function uploadImages(slug: string, postId: string) {
-		if (imageFiles.length === 0) return;
-		const server = getActiveServer();
-		const token = getToken();
-		if (!server || !token) return;
-		const formData = new FormData();
-		for (const file of imageFiles) formData.append('file', file);
-		await fetch(`${server}/api/communities/${slug}/posts/${postId}/images`, {
-			method: 'POST',
-			headers: { 'Authorization': `Bearer ${token}` },
-			body: formData,
-		});
-	}
-
 	function submit() {
 		requireAuth(async () => {
-			if (!selectedCommunity) { error = 'Select a community'; return; }
 			if (!title.trim()) { error = 'Title is required'; return; }
 			loading = true;
 			error = '';
 			try {
-				const post = await api.posts.create(selectedCommunity, {
+				const post = await api.posts.create({
 					kind,
 					category,
 					title: title.trim(),
@@ -165,13 +78,8 @@
 					location_lon: locationLon,
 					contact_method: contactMethod.trim() || null,
 				});
-				sendPinDetails();
-				await uploadImages(selectedCommunity, post.id);
-				const iframe = document.querySelector('iframe');
-				if (iframe?.contentWindow) {
-					try { iframe.contentWindow.postMessage({ type: 'komun:submit' }, 'https://app.piggpin.space'); } catch (_) {}
-				}
-				goto(`/c/${selectedCommunity}`);
+				if (imageFiles.length > 0) await api.posts.addImages(post.id, imageFiles);
+				goto(`/p/${post.id}`);
 			} catch (e: any) {
 				error = e.message || 'Failed to create post';
 			} finally {
@@ -181,21 +89,10 @@
 	}
 </script>
 
-<svelte:window onmessage={handlePickMessage} />
-
 <div class="container">
 	<h1>New Post</h1>
 
 	<form onsubmit={(e) => { e.preventDefault(); submit(); }}>
-		<label>
-			<span>Community</span>
-			<select bind:value={selectedCommunity}>
-				{#each communities as c}
-					<option value={c.slug}>{c.name}</option>
-				{/each}
-			</select>
-		</label>
-
 		<label>
 			<span>Type</span>
 			<div class="kind-selector">
@@ -221,12 +118,12 @@
 
 		<label>
 			<span>Title</span>
-			<input type="text" bind:value={title} oninput={sendPinDetails} placeholder="What do you need or offer?" maxlength="200" />
+			<input type="text" bind:value={title} placeholder="What do you need or offer?" maxlength="200" />
 		</label>
 
 		<label>
 			<span>Details (optional)</span>
-			<textarea bind:value={body} oninput={sendPinDetails} placeholder="More info..." rows="3"></textarea>
+			<textarea bind:value={body} placeholder="More info..." rows="3"></textarea>
 		</label>
 
 		<label>
@@ -276,29 +173,6 @@
 			<span>Location (optional)</span>
 			<input type="text" bind:value={locationName} placeholder="Neighborhood or area" />
 		</label>
-
-		{#if mapIframeSrc}
-			<div class="picker-section">
-				{#if locationLat != null && locationLon != null}
-					<div class="picked-coords">
-						Pinned: {locationLat.toFixed(5)}, {locationLon.toFixed(5)}
-						<button type="button" class="clear-pin" onclick={() => { locationLat = null; locationLon = null; }}>×</button>
-					</div>
-				{:else}
-					<button type="button" class="pick-toggle" onclick={() => { showPicker = !showPicker; if (showPicker) setTimeout(sendPinDetails, 2000); }}>
-						📌 {showPicker ? 'Hide map' : 'Pin on map'}
-					</button>
-				{/if}
-				{#if showPicker}
-					<iframe
-						src={mapIframeSrc}
-						title="Pick a location on the map"
-						allow="geolocation; clipboard-write"
-					sandbox="allow-scripts allow-popups allow-same-origin"
-					></iframe>
-				{/if}
-			</div>
-		{/if}
 
 		<label>
 			<span>Contact method (optional)</span>
@@ -374,51 +248,6 @@
 		border-color: var(--accent);
 		color: var(--accent);
 		background: var(--accent-soft);
-	}
-
-	.picker-section {
-		margin: -0.5rem 0;
-	}
-
-	.pick-toggle {
-		background: var(--bg-surface);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		padding: 0.5rem 0.75rem;
-		color: var(--text);
-		font-size: 0.85rem;
-		cursor: pointer;
-		width: 100%;
-		text-align: left;
-	}
-	.pick-toggle:hover { border-color: var(--accent); }
-
-	.picker-section iframe {
-		width: 100%;
-		height: 250px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		margin-top: 0.5rem;
-	}
-
-	.picked-coords {
-		font-size: 0.8rem;
-		color: var(--accent);
-		margin-bottom: 0;
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.clear-pin {
-		background: none;
-		border: 1px solid var(--border);
-		border-radius: 3px;
-		color: var(--text-muted);
-		cursor: pointer;
-		font-size: 0.75rem;
-		padding: 0 4px;
-		line-height: 1.2;
 	}
 
 	button[type="submit"] {

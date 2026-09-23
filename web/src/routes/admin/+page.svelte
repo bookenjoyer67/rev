@@ -24,7 +24,6 @@
 
 	<nav class="admin-nav">
 		<a href="/admin/users">Users</a>
-		<a href="/admin/communities">Communities</a>
 	</nav>
 
 	{#if loading}
@@ -32,8 +31,9 @@
 	{:else if stats}
 		<div class="stats-grid">
 			<div class="stat"><span class="val">{stats.users}</span><span class="label">Users</span></div>
-			<div class="stat"><span class="val">{stats.communities}</span><span class="label">Communities</span></div>
 			<div class="stat"><span class="val">{stats.active_posts}</span><span class="label">Active Posts</span></div>
+			<!-- A3.2 dropped `communities` from `/api/admin/stats`; `total_posts` is emitted and was never shown. -->
+			<div class="stat"><span class="val">{stats.total_posts}</span><span class="label">Total Posts</span></div>
 			<div class="stat"><span class="val">{stats.matches}</span><span class="label">Matches</span></div>
 			<div class="stat"><span class="val">{stats.messages}</span><span class="label">Messages</span></div>
 			<div class="stat"><span class="val">{stats.directory_entries}</span><span class="label">Directory</span></div>

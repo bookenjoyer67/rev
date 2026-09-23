@@ -6,9 +6,7 @@ export interface NodeInfo {
 	version: string;
 	domain?: string;
 	location?: { name?: string; lat?: number; lon?: number };
-	communities_count: number;
 	listed: boolean;
-	federation_enabled: boolean;
 }
 
 export interface KnownServer {
@@ -64,48 +62,6 @@ export function getActiveServer(): string | null {
 export function getServerByDomain(domain: string): KnownServer | null {
 	const state = get(serverState);
 	return state.known.find(s => s.domain === domain) || null;
-}
-
-export function parseSlug(rawSlug: string): { localSlug: string; domain: string | null } {
-	const atIdx = rawSlug.lastIndexOf('@');
-	if (atIdx === -1) return { localSlug: rawSlug, domain: null };
-	return {
-		localSlug: rawSlug.substring(0, atIdx),
-		domain: rawSlug.substring(atIdx + 1),
-	};
-}
-
-export async function resolveSlug(rawSlug: string): Promise<{ localSlug: string; serverUrl: string }> {
-	const { localSlug, domain } = parseSlug(rawSlug);
-
-	if (!domain || domain === 'localhost') {
-		const active = getActiveServer();
-		if (!active) throw new Error('Not connected to a server');
-		return { localSlug, serverUrl: active };
-	}
-
-	// Check known servers for this domain
-	const known = getServerByDomain(domain);
-	if (known) {
-		// Switch to this server if not already active
-		const active = getActiveServer();
-		if (active !== known.url) {
-			try { await connectToServer(known.url); } catch { /* keep going */ }
-		}
-		return { localSlug, serverUrl: known.url };
-	}
-
-	// Construct URL from domain — try https first
-	const url = `https://${domain}`;
-	try {
-		const info = await connectToServer(url);
-		return { localSlug, serverUrl: url };
-	} catch {
-		// Try http
-		const urlHttp = `http://${domain}`;
-		await connectToServer(urlHttp);
-		return { localSlug, serverUrl: urlHttp };
-	}
 }
 
 export function isConnected(): boolean {

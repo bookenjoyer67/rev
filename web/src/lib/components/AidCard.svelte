@@ -3,26 +3,7 @@
 	import LinkPreview from './LinkPreview.svelte';
 	import { auth, getToken } from '$lib/stores/auth';
 	import { getActiveServer } from '$lib/stores/server';
-
-	interface PostLike {
-		id: string;
-		kind: 'resource' | 'need' | 'offer';
-		category: string;
-		title: string;
-		body?: string;
-		location_name?: string;
-		location_lat?: number;
-		location_lon?: number;
-		urgency?: string;
-		status?: string;
-		author_id: string;
-		images?: string[];
-		contact_method?: string;
-		created_at: string;
-		server_url?: string;
-		community_slug?: string;
-		community_name?: string;
-	}
+	import type { PostLike } from '$lib/api/types';
 
 	interface Props {
 		post: PostLike;
@@ -60,7 +41,9 @@
 		return $auth.servers?.[server]?.userId || null;
 	})());
 
-	const kindLabels: Record<string, string> = { resource: 'Resource', need: 'Need', offer: 'Offer' };
+	const kindLabels: Record<string, string> = {
+		resource: 'Resource', need: 'Need', offer: 'Offer', listing: 'Listing', want: 'Want'
+	};
 
 	function timeAgo(dateStr: string): string {
 		const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
@@ -149,12 +132,16 @@
 		{/if}
 
 		<div class="footer">
-			<span class="community">{post.community_name || ''}</span>
+			<!--
+				A6 flattened the model: a post belongs to a server, not to a community inside one.
+				The origin worth showing in a federated feed is therefore the server it came from.
+			-->
+			<span class="origin">{post.server_name || ''}</span>
 			<div class="footer-actions">
 				{#if post.location_lat != null && post.location_lon != null}
 					<button class="map-btn" onclick={() => showMap = true} title="View on map">📍</button>
 				{/if}
-				<button class="map-btn" onclick={() => { navigator.clipboard.writeText(`${location.origin}/c/${post.community_slug || ''}/p/${post.id}`); }} title="Copy link">🔗</button>
+				<a class="map-btn permalink" href="/p/{post.id}" title="Open this post">🔗</a>
 				{#if post.author_id === myUserId && (onFulfill || onEdit || onDelete)}
 					{#if post.status === 'fulfilled'}
 						<span class="fulfilled-badge">Fulfilled</span>
@@ -176,8 +163,26 @@
 </article>
 
 {#if showMap}
-	<div class="map-overlay" role="dialog" onclick={() => showMap = false}>
-		<div class="map-popout" onclick={(e) => e.stopPropagation()}>
+	<!--
+		The backdrop dismisses the popout on click; it needs to do the same from the keyboard,
+		and it needs to be focusable for `role="dialog"` to mean anything to a screen reader.
+	-->
+	<div
+		class="map-overlay"
+		role="dialog"
+		aria-modal="true"
+		aria-label="Post location"
+		tabindex="-1"
+		onclick={() => showMap = false}
+		onkeydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') showMap = false; }}
+	>
+		<!-- Click-catcher: it exists only to stop the backdrop dismissing when the map is clicked. -->
+		<div
+			class="map-popout"
+			role="presentation"
+			onclick={(e) => e.stopPropagation()}
+			onkeydown={(e) => e.stopPropagation()}
+		>
 			<button class="map-close" onclick={() => showMap = false}>&times;</button>
 			<iframe
 				title="Post location"
@@ -191,7 +196,7 @@
 
 {#if showModal}
 	<RespondModal
-		post={{ id: post.id, title: post.title, kind: post.kind, server_url: post.server_url || getActiveServer() || '', community_slug: post.community_slug || '', author_id: post.author_id }}
+		post={{ id: post.id, title: post.title, kind: post.kind, server_url: post.server_url || getActiveServer() || '', author_id: post.author_id }}
 		onClose={() => showModal = false}
 	/>
 {/if}
@@ -238,7 +243,8 @@
 	.map-popout iframe { width: 100%; height: 100%; border: none; }
 	.map-close { position: absolute; top: 0.5rem; right: 0.5rem; z-index: 1; background: var(--bg-surface); color: var(--text); border: 1px solid var(--border); border-radius: 50%; width: 28px; height: 28px; font-size: 1rem; display: flex; align-items: center; justify-content: center; padding: 0; min-height: unset; min-width: unset; }
 
-	.community { font-size: var(--text-sm); color: var(--text); font-weight: 600; }
+	.origin { font-size: var(--text-sm); color: var(--text); font-weight: 600; }
+	.permalink { display: inline-flex; align-items: center; text-decoration: none; line-height: 1; }
 	.respond-btn { font-size: var(--text-xs); padding: var(--space-1) var(--space-3); }
 	.your-post { color: var(--text-muted); font-size: var(--text-xs); font-style: italic; }
 	.fulfilled-badge { font-size: 0.75rem; color: var(--success); font-weight: 600; }

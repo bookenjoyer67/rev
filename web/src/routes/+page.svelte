@@ -5,11 +5,10 @@
 	import AidCard from '$lib/components/AidCard.svelte';
 	import { location, hasLocation, getLocation } from '$lib/stores/location';
 	import { isConnected, connectToServer } from '$lib/stores/server';
-	import { discoverNearbyServers, fetchFromServers, type AggregatedPost, type NearbyServer, type DiscoveredCommunity } from '$lib/api/discovery';
+	import { discoverNearbyServers, fetchFromServers, type AggregatedPost, type NearbyServer } from '$lib/api/discovery';
 
 	let posts: AggregatedPost[] = $state([]);
 	let servers: NearbyServer[] = $state([]);
-	let communities: DiscoveredCommunity[] = $state([]);
 	let loading = $state(false);
 	let searched = $state(false);
 	let filter = $state('all');
@@ -30,14 +29,11 @@
 				const result = await fetchFromServers(servers,
 					loc.lat && loc.lon ? { lat: loc.lat, lon: loc.lon, radiusKm: 50 } : undefined);
 				posts = result.posts;
-				communities = result.communities;
 			} else {
 				posts = [];
-				communities = [];
 			}
 		} catch (e) {
 			posts = [];
-			communities = [];
 		}
 		loading = false;
 	}
@@ -56,15 +52,19 @@
 		filter === 'all' ? posts : posts.filter((p) => p.kind === filter)
 	);
 
-	async function startCommunity() {
-		if (isConnected()) {
-			goto('/community/create');
-		} else if (servers.length > 0) {
+	/**
+	 * A6 removed communities, so the way to seed an empty server is to post to it directly
+	 * rather than to found a container first.
+	 */
+	async function postFirst() {
+		if (!isConnected()) {
+			if (servers.length === 0) {
+				goto('/connect');
+				return;
+			}
 			await connectToServer(servers[0].url);
-			goto('/community/create');
-		} else {
-			goto('/connect');
 		}
+		goto('/aid/new');
 	}
 </script>
 
@@ -100,28 +100,13 @@
 			<p class="status">Searching for aid nearby...</p>
 		{:else if servers.length === 0}
 			<div class="empty">
-				<p>No communities found nearby. Be the first to organize mutual aid.</p>
-				<button class="start-btn" onclick={startCommunity}>Start a community</button>
-				<p class="sub">Or <a href="/connect">browse available servers</a> to join an existing one.</p>
-			</div>
-		{:else if filteredPosts.length === 0 && communities.length === 0}
-			<div class="empty">
-				<p>No communities here yet. Be the first to organize mutual aid.</p>
-				<button class="start-btn" onclick={startCommunity}>Start a community</button>
-				<p class="sub">Found {servers.length} server{servers.length > 1 ? 's' : ''} nearby.</p>
+				<p>No servers found nearby. Be the first to organize mutual aid.</p>
+				<p class="sub"><a href="/connect">Browse available servers</a> to join one.</p>
 			</div>
 		{:else if filteredPosts.length === 0}
 			<div class="empty">
-				<p>Found {communities.length} communit{communities.length > 1 ? 'ies' : 'y'} nearby, but no posts yet.</p>
-				<div class="community-links">
-					{#each communities as comm}
-						{@const domain = comm.server_url.replace(/^https?:\/\//, '').split('/')[0].split(':')[0]}
-						<a href="/c/{comm.slug}@{domain}" class="community-link" onclick={() => connectToServer(comm.server_url)}>
-							{comm.name}
-						</a>
-					{/each}
-				</div>
-				<button class="start-btn" onclick={startCommunity}>Start another community</button>
+				<p>Found {servers.length} server{servers.length > 1 ? 's' : ''} nearby, but no posts yet.</p>
+				<button class="start-btn" onclick={postFirst}>Post the first one</button>
 			</div>
 		{:else}
 			<ul class="feed">
@@ -130,8 +115,8 @@
 				{/each}
 			</ul>
 			<p class="feed-footer">
-				Showing aid from {servers.length} nearby communit{servers.length > 1 ? 'ies' : 'y'}
-				&middot; <button class="link-btn" onclick={startCommunity}>Start a community</button>
+				Showing aid from {servers.length} nearby server{servers.length > 1 ? 's' : ''}
+				&middot; <button class="link-btn" onclick={postFirst}>Post something</button>
 			</p>
 		{/if}
 	{/if}
@@ -263,13 +248,6 @@
 	.empty p { color: var(--text-muted); }
 	.empty .sub { font-size: 0.85rem; margin-top: 0.5rem; }
 
-	.community-links {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		justify-content: center;
-		margin: 1rem 0;
-	}
 	.filters button {
 		background: var(--bg-surface);
 		color: var(--text-muted);
@@ -298,20 +276,5 @@
 
 	.start-btn:hover {
 		transform: translateY(-1px);
-	}
-
-	.community-link {
-		background: var(--bg-surface);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-full);
-		padding: 0.5rem 1rem;
-		font-size: var(--text-sm);
-		color: var(--text);
-		transition: border-color var(--transition-fast);
-	}
-
-	.community-link:hover {
-		border-color: var(--accent);
-		text-decoration: none;
 	}
 </style>

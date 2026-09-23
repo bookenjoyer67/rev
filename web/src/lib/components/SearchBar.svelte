@@ -3,6 +3,11 @@
 
     let query = $state('');
     let open = $state(false);
+    let input: HTMLInputElement | null = $state(null);
+
+    // `autofocus` steals focus on page load; focusing here only happens once the user has
+    // opened the box themselves, which is what the attribute was actually trying to express.
+    $effect(() => { if (open) input?.focus(); });
 
     function handleSubmit(e: Event) {
         e.preventDefault();
@@ -30,10 +35,10 @@
     <form class="search-form" onsubmit={handleSubmit}>
         <input
             type="search"
+            bind:this={input}
             bind:value={query}
-            placeholder="Search posts, communities..."
+            placeholder="Search posts and users..."
             class="search-input"
-            autofocus
         />
         <button type="button" class="search-close" onclick={() => { open = false; query = ''; }} aria-label="Close search">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>

@@ -39,84 +39,83 @@ async function requestOn<T>(base: string, path: string, options?: RequestInit & 
 	return res.json();
 }
 
-export const api = {
-	communities: {
-		list: () => request<any[]>('/communities'),
-		get: (slug: string) => request<any>(`/communities/${slug}`, { auth: true }),
-		members: (slug: string) => request<any[]>(`/communities/${slug}/members`),
-		update: (slug: string, data: { name?: string; description?: string; visibility?: string; location_name?: string | null; location_lat?: number | null; location_lon?: number | null }) =>
-			request<any>(`/communities/${slug}`, { method: 'PATCH', body: JSON.stringify(data), auth: true }),
-		listInvites: (slug: string) => request<any[]>(`/communities/${slug}/invites`, { auth: true }),
-		deleteInvite: (slug: string, code: string) =>
-			request<any>(`/communities/${slug}/invites/${code}`, { method: 'DELETE', auth: true }),
-		create: (data: { name: string; slug: string; description?: string; location_name?: string; location_lat?: number | null; location_lon?: number | null }) =>
-			request<any>('/communities', {
-				method: 'POST',
-				body: JSON.stringify(data),
-				auth: true,
-			}),
-		createInvite: (slug: string) =>
-			request<any>(`/communities/${slug}/invite`, {
-				method: 'POST',
-				auth: true,
-			}),
-		join: (slug: string, code: string) =>
-			request<any>(`/communities/${slug}/join`, {
-				method: 'POST',
-				body: JSON.stringify({ code }),
-				auth: true,
-			}),
-	},
+/**
+ * Multipart upload. `fetch` has to set `Content-Type` itself here so the boundary is correct,
+ * which is why this does not go through `requestOn`.
+ */
+async function upload<T>(path: string, form: FormData): Promise<T> {
+	const headers: Record<string, string> = {};
+	const token = getToken();
+	if (token) headers['Authorization'] = `Bearer ${token}`;
 
+	const res = await fetch(`${getBase()}${path}`, { method: 'POST', body: form, headers });
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		console.error('[api] error:', res.status, path, err.error || res.statusText);
+		throw new Error(err.error || 'Upload failed');
+	}
+	return res.json();
+}
+
+/**
+ * A3 flattened the backend: posts are a server-wide collection at `/api/posts`, there is no
+ * tenant segment in any path, and `/api/communities` and `/api/alliances` are gone (they 404).
+ * A6 flattens the client to match — every call below corresponds to a route that exists.
+ */
+export const api = {
 	posts: {
-		list: (slug: string, filters?: Record<string, string>) => {
+		list: (filters?: Record<string, string>) => {
 			const params = new URLSearchParams(
 				Object.fromEntries(Object.entries(filters || {}).filter(([, v]) => v))
 			).toString();
 			const qs = params ? `?${params}` : '';
-			return request<any[]>(`/communities/${slug}/posts${qs}`);
+			return request<any[]>(`/posts${qs}`);
 		},
-		get: (slug: string, id: string) => request<any>(`/communities/${slug}/posts/${id}`),
-		create: (slug: string, data: any) =>
-			request<any>(`/communities/${slug}/posts`, {
+		get: (id: string) => request<any>(`/posts/${id}`),
+		create: (data: any) =>
+			request<any>('/posts', {
 				method: 'POST',
 				body: JSON.stringify(data),
 				auth: true,
 			}),
-		respond: (postId: string, message: string, serverUrl?: string) => {
-			const base = serverUrl ? `${serverUrl}/api` : getBase();
-			return requestOn<{ match_id: string }>( base, `/posts/${postId}/respond`, {
-				method: 'POST',
-				body: JSON.stringify({ message }),
-				auth: true,
-			});
-		},
-		update: (slug: string, id: string, data: { title?: string; body?: string; urgency?: string; status?: string }) =>
-			request<any>(`/communities/${slug}/posts/${id}`, {
+		update: (id: string, data: { title?: string; body?: string; urgency?: string; status?: string }) =>
+			request<any>(`/posts/${id}`, {
 				method: 'PATCH',
 				body: JSON.stringify(data),
 				auth: true,
 			}),
-		fulfill: (slug: string, id: string) =>
-			request<any>(`/communities/${slug}/posts/${id}`, {
-				method: 'PATCH',
-				body: JSON.stringify({ status: 'fulfilled' }),
-				auth: true,
-			}),
-		withdraw: (slug: string, id: string) =>
-			request<any>(`/communities/${slug}/posts/${id}`, {
+		delete: (id: string) =>
+			request<any>(`/posts/${id}`, {
 				method: 'DELETE',
 				auth: true,
 			}).catch((e: Error) => { console.error('[delete] withdraw failed:', e.message); throw e; }),
+		addImages: (id: string, files: File[]) => {
+			const form = new FormData();
+			for (const file of files) form.append('images', file);
+			return upload<{ images: string[] }>(`/posts/${id}/images`, form);
+		},
 	},
 
 	conversations: {
 		list: () => request<any[]>('/me/conversations', { auth: true }),
 		get: (matchId: string) => request<any>(`/conversations/${matchId}`, { auth: true }),
-		sendMessage: (matchId: string, body: string) =>
+		/**
+		 * A3.3 sealed the wire: the server stores an opaque blob and never sees plaintext, so
+		 * both of these take a ciphertext. `nonce` is optional because `encryptMessage` prepends
+		 * the 24-byte XChaCha20 nonce to the blob it returns.
+		 */
+		respond: (postId: string, ciphertext: string, serverUrl?: string) => {
+			const base = serverUrl ? `${serverUrl}/api` : getBase();
+			return requestOn<{ match_id: string }>(base, `/posts/${postId}/respond`, {
+				method: 'POST',
+				body: JSON.stringify({ ciphertext }),
+				auth: true,
+			});
+		},
+		sendMessage: (matchId: string, ciphertext: string) =>
 			request<any>(`/conversations/${matchId}/messages`, {
 				method: 'POST',
-				body: JSON.stringify({ body }),
+				body: JSON.stringify({ ciphertext }),
 				auth: true,
 			}),
 		updateStatus: (matchId: string, status: string) =>
@@ -125,22 +124,6 @@ export const api = {
 				body: JSON.stringify({ status }),
 				auth: true,
 			}),
-	},
-
-	alliances: {
-		list: () => request<any[]>('/alliances'),
-		propose: (remote_domain: string, remote_name?: string) =>
-			request<any>('/alliances', {
-				method: 'POST',
-				body: JSON.stringify({ remote_domain, remote_name }),
-				auth: true,
-			}),
-		accept: (id: string) =>
-			request<any>(`/alliances/${id}/accept`, { method: 'POST', auth: true }),
-		reject: (id: string) =>
-			request<any>(`/alliances/${id}/reject`, { method: 'POST', auth: true }),
-		delete: (id: string) =>
-			request<any>(`/alliances/${id}`, { method: 'DELETE', auth: true }),
 	},
 
 	endorsements: {
@@ -168,8 +151,6 @@ export const api = {
 			body: JSON.stringify({ role }),
 			auth: true,
 		}),
-		listCommunities: () => request<any[]>('/admin/communities', { auth: true }),
-		deleteCommunity: (id: string) => request<any>(`/admin/communities/${id}`, { method: 'DELETE', auth: true }),
 		listDirectory: () => request<any[]>('/admin/directory', { auth: true }),
 		removeDirectoryEntry: (url: string) => request<any>(`/admin/directory/${encodeURIComponent(url)}`, { method: 'DELETE', auth: true }),
 	},

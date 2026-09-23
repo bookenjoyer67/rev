@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import AidCard from '$lib/components/AidCard.svelte';
 import { auth } from '$lib/stores/auth';
+import type { PostLike } from '$lib/api/types';
 
 vi.mock('$lib/stores/server', () => ({
 	getActiveServer: vi.fn(() => 'https://test.komun.buzz'),
@@ -12,9 +13,14 @@ vi.mock('$lib/stores/server', () => ({
 
 vi.mock('$lib/api/discovery', () => ({}));
 
-const makePost = (overrides = {}) => ({
+/**
+ * A6 flattened the model: a post belongs to a server, not to a community inside one. The
+ * fixture is typed as the real `PostLike` now — the twelve type errors this file used to carry
+ * all came from an untyped literal being passed to a prop that wanted a `kind` union, and a
+ * fixture that cannot drift from the component's contract cannot reproduce them.
+ */
+const makePost = (overrides: Partial<PostLike> = {}): PostLike => ({
 	id: 'post-1',
-	community_id: 'comm-1',
 	author_id: 'author-1',
 	kind: 'need',
 	category: 'food',
@@ -23,9 +29,6 @@ const makePost = (overrides = {}) => ({
 	urgency: 'high',
 	status: 'active',
 	created_at: new Date(Date.now() - 3600000).toISOString(),
-	updated_at: new Date().toISOString(),
-	community_name: 'Mutual Aid STL',
-	community_slug: 'stl',
 	server_name: 'stl.komun.buzz',
 	server_url: 'https://stl.komun.buzz',
 	server_location: 'St. Louis, MO',
@@ -62,10 +65,18 @@ describe('AidCard', () => {
 		expect(screen.getByText('Resource')).toBeInTheDocument();
 	});
 
-	it('shows community name and server', () => {
+	// Replaces `shows community name and server`. Its subject — the community a post belonged
+	// to — no longer exists; the origin a federated feed still has to show is the server.
+	it('shows the originating server, not a community', () => {
 		render(AidCard, { props: { post: makePost() } });
-		expect(screen.getByText('Mutual Aid STL')).toBeInTheDocument();
 		expect(screen.getByText('stl.komun.buzz')).toBeInTheDocument();
+		expect(screen.queryByText('Mutual Aid STL')).not.toBeInTheDocument();
+	});
+
+	// The permalink is flat now: `/p/{id}`, with no community segment to resolve first.
+	it('links to the flat post permalink', () => {
+		render(AidCard, { props: { post: makePost({ id: 'post-42' }) } });
+		expect(screen.getByTitle('Open this post')).toHaveAttribute('href', '/p/post-42');
 	});
 
 	it('shows "I can help" button for need post by other author', () => {
@@ -119,11 +130,14 @@ describe('AidCard', () => {
 		const user = userEvent.setup();
 		render(AidCard, { props: { post: makePost({ kind: 'need', author_id: 'other' }) } });
 		await user.click(screen.getByText('I can help'));
-		expect(screen.getByPlaceholderText('What should people call you?')).toBeInTheDocument();
+		// The modal no longer collects a display name: A2a replaced the anonymous device
+		// identity with a session, so an unauthenticated visitor is sent to sign up instead.
+		expect(screen.getByText('Offer help')).toBeInTheDocument();
+		expect(screen.getByText('Create an account')).toBeInTheDocument();
 	});
 
 	it('hides body when not provided', () => {
-		render(AidCard, { props: { post: makePost({ body: null }) } });
+		render(AidCard, { props: { post: makePost({ body: undefined }) } });
 		expect(screen.queryByText('Can someone help with groceries this week?')).not.toBeInTheDocument();
 	});
 });
