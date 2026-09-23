@@ -1,402 +1,140 @@
-# Coding conventions
+# Conventions
 
-## Rust
+Frozen conventions for the reshaped Komun. Every rule below is taken from
+`.dispatch/SPEC.md` Parts 1–2 or verified in the tree, and each names the file or SPEC
+section that demonstrates it so a reader can check the claim. (`docs/DEVELOPMENT.md`
+covers how to build, run and test.)
 
-### Error handling patterns
-
-**Bootstrap errors** — `.expect()` panics for unrecoverable failures:
-```rust
-// config loading, DB connection, migrations, server bind
-let pool = PgPoolOptions::new().connect(&url).await.expect("db connect");
-```
-
-**API handlers** — `Result<Json<T>, (StatusCode, Json<serde_json::Value>)>`:
-```rust
-async fn handler(
-    State(state): State<AppState>,
-    ...
-) -> Result<Json<MyResponse>, (StatusCode, Json<serde_json::Value>)> {
-    // ...
-    Ok(Json(response))
-}
-```
-The `(StatusCode, Json<Value>)` tuple implements Axum's `IntoResponse`.
-
-**Config loading** — `anyhow::Result` with `?` propagation:
-```rust
-fn load() -> anyhow::Result<Self> { ... }
-```
-
-**WASM** — `Result<T, JsValue>` with `JsValue::from_str("error message")`.
-
-**DB errors** — Mapped to 500:
-```rust
-.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))
-```
-
-### Module and router patterns
-
-Each API submodule exports a `router(state: AppState) -> Router`:
-```rust
-// api/health.rs
-use axum::{Router, routing::get};
-use crate::AppState;
-
-pub fn router() -> Router {
-    Router::new().route("/health", get(health_handler))
-}
-
-// api/communities.rs
-pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/", get(list).post(create))
-        .route("/{slug}", get(get_one).put(update).delete(delete))
-        .with_state(state)
-}
-```
-
-Routes are composed in `api/mod.rs`:
-```rust
-pub fn router(state: AppState) -> Router {
-    Router::new()
-        .merge(health::router())
-        .nest("/auth", auth::router(state.clone()))
-        .nest("/communities", communities::router(state.clone()))
-        .with_state(state)
-}
-```
-
-- `merge` — flat route (no prefix)
-- `nest` — prefix all routes in the sub-router
-
-### State management
-
-`AppState` is `Clone` via `Arc`:
-```rust
-#[derive(Clone)]
-pub struct AppState {
-    pub pool: sqlx::PgPool,
-    pub config: Arc<Config>,
-    pub relay_store: Option<Arc<komun_relay::storage::PersistentStore>>,
-}
-```
-
-Passed to handlers via Axum's `State` extractor:
-```rust
-async fn handler(State(state): State<AppState>) -> ...
-```
-
-### Database queries
-
-All database access through `db/` modules, using SQLx:
-```rust
-// In db/posts.rs
-pub async fn get_post(pool: &PgPool, id: Uuid) -> Result<Post, sqlx::Error> {
-    sqlx::query_as!(Post, "SELECT * FROM posts WHERE id = $1", id)
-        .fetch_one(pool)
-        .await
-}
-```
-
-### Auth middleware
-
-Two middleware levels in `auth/mod.rs`:
-```rust
-pub async fn require_auth(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    request: Request,
-    next: Next,
-) -> Response { ... }
-
-pub async fn require_superadmin(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    request: Request,
-    next: Next,
-) -> Response { ... }
-```
-
-User identity is stored in request extensions:
-```rust
-request.extensions().insert(AuthUser { user_id });
-```
-
-### Naming conventions
-
-- **Crates**: `komun-core`, `komun-server`, `komun-relay`, `komun-wasm`
-- **Modules**: lowercase, underscore-separated (`relay_bridge.rs`, `relay_ops.rs`)
-- **Structs**: PascalCase (`AppState`, `ServerConfig`, `AuthUser`)
-- **Functions**: snake_case (`spawn_relay`, `create_token`, `wrap_dek`)
-- **Config serde fields**: snake_case in TOML, matching Rust field names
-
-### Feature flags (relay crate)
-
-Optional bridges are behind features:
-```toml
-[features]
-mqtt-bridge = ["dep:rumqttc", "dep:meshtastic_protobufs", "dep:prost"]
-rnode-bridge = ["dep:serialport"]
-reticulum-bridge = ["dep:reticulum-rs-core", "dep:reticulum-rs-transport"]
-peer-relay = []
-tls = ["dep:rustls", "dep:rustls-pemfile", "dep:tokio-rustls"]
-hot-reload = ["dep:notify"]
-```
-
-Module gating:
-```rust
-#[cfg(feature = "mqtt-bridge")]
-pub mod mqtt_bridge;
-```
-
-The server crate depends on relay with `default-features = false` (no bridges by default).
-
-### Base64/hex encoding
-
-- Public keys, encrypted blobs on the wire: **base64** (standard, no padding variation)
-- Relay community keys in storage/config: **hex** (lowercase)
-- WASM types return `Vec<u8>`; the TypeScript wrapper does base64 conversion
+Where a rule's implementing file is an Agent A deliverable that has not landed on this
+branch yet, the rule is still the contract; the note says so explicitly, and the current
+violation is reported rather than silently worked around.
 
 ---
 
-## SvelteKit (frontend)
+## 1. Database enums: one `db_enum!` macro, one source of truth
 
-### Svelte 5 runes (required — no legacy syntax)
+**Rule.** Every Rust enum that maps to a DB text column is defined **once**, through the
+`db_enum!` macro in `crates/core`. The macro emits serde `Serialize`/`Deserialize`,
+`as_str()`, and `parse()` from a single variant list, so the three representations cannot
+drift apart. Do **not** build an enum's database string with a `serde_json` round-trip
+(e.g. `serde_json::to_string(&kind)?.trim_matches('"')`).
 
-```svelte
-<script lang="ts">
-    // State
-    let count = $state(0);
-    let name = $state('');
+**Why.** The pre-reshape code maintained CHECK lists and Rust enums separately with
+nothing checking agreement; that produced the three live constraint bugs recorded in
+`.dispatch/SPEC.md` §2.2 (P1 `visibility`, P2 `matches.status`, P3 `posts.status`) and
+the forbidden round-trip in P4.
 
-    // Derived
-    let doubled = $derived(count * 2);
+**Enforcement.** `crates/core/src/tests.rs` reads `migrations/001_schema.sql` at test
+time and asserts that each enum's `as_str()` value set equals the `CHECK (col IN (...))`
+list parsed out of the migration, for `PostKind`, `Urgency`, `PostStatus`, `Visibility`,
+`UserRole`, and Phase B's `ItemCondition` / `OfferKind`. `Category` is no longer an enum:
+it is the seeded `categories` table (SPEC §1.6), so it gets a seed-data test instead.
+Authority: `.dispatch/SPEC.md` A1.3 (lines 730–735) and §2.2.
 
-    // Effects
-    $effect(() => {
-        console.log('count changed:', count);
-    });
+**Demonstrated by.** `migrations/001_schema.sql` (the CHECK lists) + the `db_enum!`
+definition and `crates/core/src/tests.rs` — the latter two are A1.3 deliverables, not yet
+present on this branch. Current violation on this branch: `crates/server/src/db/posts.rs`
+still builds `kind`/`category`/`urgency` with `serde_json` (SPEC P4); see `BLOCKED`.
 
-    // Props (in components)
-    let { title, onsave } = $props();
-</script>
+---
 
-<!-- Render children -->
-{@render children()}
+## 2. Migrations: one schema file, additive after it
 
-<!-- Event handlers -->
-<button onclick={() => count++}>Click</button>
+**Rule.** `migrations/001_schema.sql` **is** the schema (SPEC §1.4). A schema change is a
+new numbered file (`002_*.sql`, `003_*.sql`, …) — migrations are additive, and an applied
+migration is never edited (`AGENTS.md`: "Never edit existing migrations; add new ones").
+A `CHECK (col IN (...))` list added without a matching enum behind it is rejected **by
+design**: it fails the §1 enum-pinning test.
 
-<!-- Conditional -->
-{#if count > 0}
-    <p>Count: {count}</p>
-{/if}
+**Fresh database.** A new database is created by applying `migrations/001_schema.sql`
+once (SQLx also runs migrations automatically at server startup).
 
-<!-- Each loop -->
-{#each items as item (item.id)}
-    <li>{item.name}</li>
-{/each}
-```
+**Demonstrated by.** `migrations/001_schema.sql`; `.dispatch/SPEC.md` §1.4 (target schema),
+A6 (squash), and Part 8 (Phase B would add `002_*.sql`). On this branch the squash is still
+an A1.1 deliverable — `migrations/` still contains `001`–`015`.
 
-**Never use**: `$:`, `export let`, `on:click`, `bind:value` (use `bind:value` only where needed, but prefer `oninput`).
+---
 
-### SPA mode
+## 3. Frontend: Svelte 5 runes only, one API hub
 
-```ts
-// +layout.ts
-export const ssr = false;
-export const prerender = false;
-```
+**Runes only.** Use `$state`, `$derived`, `$effect`, `$props`. Never `$:`, `export let`,
+or `on:click`; event attributes are `onclick={handler}`. Authority: `.dispatch/SPEC.md`
+§0.4 rule 9, §6 wave A6, and the tech-stack line ("SvelteKit 5 (runes, static adapter)").
+The tree already complies — e.g. `web/src/lib/components/AidCard.svelte` and
+`web/src/lib/components/LocationMap.svelte` (B2) use the runes API and `onclick=` only.
 
-All rendering happens client-side. The `adapter-static` generates `index.html` with a SPA fallback.
+**SPA mode.** The app is client-rendered: `web/src/routes/+layout.ts` sets
+`ssr = false` and `prerender = false`; `@sveltejs/adapter-static` emits an SPA fallback.
 
-### Store conventions
+**One API hub.** `web/src/lib/api/**` is the frontend's single hub file
+(`.dispatch/SPEC.md` §5.1, "the API client — the frontend's hub file"). Every server call
+belongs there; components, routes and stores should not call `fetch('/api/...')`
+directly. The typed `request<T>` wrapper in `web/src/lib/api/client.ts` is the shape to
+extend. Current violation on this branch: many routes/stores still call `fetch()`
+directly (e.g. `web/src/lib/stores/auth.ts`, `web/src/routes/account/+page.svelte`); the
+A6.2 flatten and the A2b auth rewrite are what collapse them onto the hub; see `BLOCKED`.
 
-Svelte `writable` with localStorage persistence:
-```ts
-// lib/stores/auth.ts
-import { writable } from 'svelte/store';
+**Styling/tokens.** No CSS framework. Design tokens are CSS custom properties in
+`web/src/app.css`; components use scoped `<style>` blocks that reference those tokens
+(e.g. `web/src/lib/components/LocationMap.svelte`).
 
-const STORAGE_KEY = 'komun_auth';
+---
 
-function loadFromStorage(): AuthState { ... }
-function saveToStorage(state: AuthState) { ... }
+## 4. Crypto boundaries (hard constraint)
 
-const stored = loadFromStorage();
-export const auth = writable<AuthState>(stored);
+**No plaintext message body in the schema.** Message content is encrypted client-side;
+the `messages` table stores `ciphertext BYTEA NOT NULL` plus `nonce`, never `body TEXT`.
+Authority: `.dispatch/SPEC.md` §1.3 ("message content is never readable by the server"),
+§1.4 (`messages`), A1.2. Expected demonstrator: `migrations/001_schema.sql`'s `messages`
+table. Current violation on this branch: `migrations/001_schema.sql` still has
+`messages.body TEXT NOT NULL` (line 78); see `BLOCKED`.
 
-auth.subscribe(saveToStorage);
-```
+**Keys never leave the client; the server returns no key material or recovery code.**
+Only public keys and wrapped key bundles are server-visible; the x25519 secret and the
+passphrase are not. No endpoint ever returns key material or a recovery code after
+signup. Authority: `.dispatch/SPEC.md` §1.5 and the A2 definition of done (line 1149);
+`AGENTS.md` "Do not log keys, bundles, or passphrases anywhere." The reshaped column set
+is in SPEC §1.4 (`users`: `encryption_public_key`, `encrypted_key_bundle`,
+`bundle_salt`, `encrypted_recovery_bundle`, `recovery_bundle_salt`; `public_key` /
+`recovery_id` / `recovery_code_hash` are gone).
 
-Auto-subscription in components with `$` prefix:
-```svelte
-{#if $auth}
-    <p>Logged in as {$auth.displayName}</p>
-{/if}
-```
+**Passphrase-free UX.** Users never see, type or manage key material (SPEC decision A12);
+there is no passphrase prompt and no proof-of-possession login.
 
-Getter functions for derived state (not stores, just functions):
-```ts
-export function getToken(): string | null { ... }
-export function isAuthenticated(): boolean { ... }
-export function getActiveAuth(): PerServerAuth | null { ... }
-```
+---
 
-### API client pattern
+## 5. Process conventions
 
-Typed `request<T>` wrapper with auth opt-in:
-```ts
-// lib/api/client.ts
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-    const base = getActiveServer();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (options.auth) {
-        const token = getToken();
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-    }
-    const res = await fetch(`${base}${path}`, {
-        method: options.method || 'GET',
-        headers,
-        body: options.body ? JSON.stringify(options.body) : undefined,
-    });
-    if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || res.statusText);
-    }
-    return res.json();
-}
-```
+These are the working rules that produced the current tree; they are not optional.
 
-**Auth opt-in per call** — never auto-inject tokens. Each method explicitly passes `{ auth: true }`:
-```ts
-export const api = {
-    communities: {
-        list: () => request('/api/communities'),
-        create: (data) => request('/api/communities', { method: 'POST', body: data, auth: true }),
-    },
-};
-```
+- **Write in place.** The moment a file is ready, write it — do not batch writes to the
+  end. Authority: `.dispatch/SPEC.md` §0.4 rule 5.
+- **One writer per file; changes to a file you do not own go through a hub request.** A
+  file has exactly one owner (`.dispatch/SPEC.md` §5). If a non-owner needs a change, it
+  writes the exact unified diff to `.dispatch/hub-requests/<ID>.md` and keeps going; it
+  never edits the file. Authority: SPEC §0.2, §5.3.
+- **No new dependency without a hub request.** The agent containers have no egress, so
+  `cargo add` / `npm install` cannot work. `Cargo.toml`, `crates/*/Cargo.toml`,
+  `web/package.json` and `web/package-lock.json` are orchestrator-only. Authority: SPEC
+  §0.2 rule 2, §0.4 rule 4, §5.3.
+- **Comments explain *why*, not *what*.** Doc- and line-comments state the reason a
+  design is the way it is (invariant, constraint, failure mode), rather than restating the
+  code. Demonstrated by `crates/server/src/api/geocode/limiter.rs:8-14` and
+  `crates/server/src/api/geocode/cache.rs:15-18`, which explain the queueing/eviction
+  rationale, not the syntax.
+- **Measure gates honestly.** A warning/lint claim must come from the command that
+  actually produces it: `cargo build` never shows clippy lints, and a cached `cargo
+  clippy` run prints nothing — touch a source file first. `svelte-check` is expected to
+  report the frozen inherited baseline until the frontend flatten lands. Authority:
+  `.dispatch/SPEC.md` §0.4 rule 7, `.dispatch/BACKEND-LINT-BASELINE.md`,
+  `.dispatch/FRONTEND-BASELINE.md`.
+- **Never edit an applied migration.** See §2.
 
-### `requestOn` for cross-server calls
+---
 
-When hitting a different server (e.g., responding to a post discovered via directory):
-```ts
-async function requestOn<T>(base: string, path: string, options: RequestOptions = {}): Promise<T>
-```
+## Re-check
 
-### CSS conventions
-
-All design tokens in `app.css` as custom properties:
-```css
-:root {
-    --bg: #0f0f1a;
-    --bg-surface: #1a1a2e;
-    --bg-elevated: #25253e;
-    --text: #e8e8f0;
-    --text-muted: #8888aa;
-    --accent: #e63946;
-    --accent-soft: #e6394620;
-    --success: #2ec4b6;
-    --warning: #f4a261;
-    --critical: #e63946;
-    --border: #2a2a4a;
-    --radius: 8px;
-    --radius-lg: 12px;
-}
-```
-
-**No Tailwind, no CSS framework.** All styling via scoped `<style>` blocks in each component:
-```svelte
-<style>
-    .my-class {
-        background: var(--bg-surface);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        color: var(--text);
-    }
-</style>
-```
-
-Basic reset in `app.css` (box-sizing, margin, font). Input elements get `font-size: 16px` (prevents iOS zoom). `.container` utility: `max-width: 800px`, centered, `1rem` padding, `word-break: break-word`.
-
-### Component conventions
-
-- **PascalCase filenames**: `AidCard.svelte`, `LocationBar.svelte`, `Onboarding.svelte`
-- **Location**: `src/lib/components/`
-- **Imports**: `import AidCard from '$lib/components/AidCard.svelte';`
-- **Props**: Svelte 5 `$props()` rune
-- **Stores**: Imported directly, subscribed with `$` prefix in template
-- **Styles**: Scoped `<style>` blocks in each `.svelte` file
-
-### Auth gating pattern
-
-Components that require authentication use `requireAuth`:
-```ts
-import { requireAuth } from '$lib/stores/auth';
-
-function handleCreatePost() {
-    requireAuth(() => {
-        // Only runs if authenticated
-        goto('/aid/new');
-    });
-}
-```
-
-If not authenticated, `requireAuth` shows the `Onboarding` modal and queues the action. After auth completes, the action runs automatically.
-
-### Service worker
-
-```ts
-// service-worker.ts
-import { build, files, version } from '$service-worker';
-
-const CACHE = `komun-${version}`;
-
-// install: cache all build assets + static files
-// activate: delete old caches
-// fetch:
-//   - Non-GET: passthrough
-//   - Static assets: cache-first
-//   - /api/*: network-first, cache fallback, offline 503 JSON
-//   - Navigation: network-first, fallback to cached index.html
-```
-
-### PWA manifest
-
-```json
-{
-    "name": "Komun",
-    "short_name": "Komun",
-    "start_url": "/",
-    "display": "standalone",
-    "background_color": "#0f0f1a",
-    "theme_color": "#1a1a2e",
-    "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
-}
-```
-
-### TypeScript
-
-- Strict mode enabled (`"strict": true`)
-- Module resolution: `bundler`
-- `$lib/*` path alias (SvelteKit convention)
-- No ESLint, no Prettier, no Biome — only `svelte-check` for type/lint checking
-
-### Directory conventions
-
-```
-web/src/
-  app.html           HTML shell (SvelteKit template)
-  app.css            Global CSS custom properties + reset
-  service-worker.ts  Offline-capable service worker
-  lib/
-    api/             API client + server discovery
-    components/      Reusable Svelte components
-    stores/          Svelte writable stores
-    crypto.ts        WASM crypto wrapper
-    wasm/            (empty — wasm files referenced via ../crates/wasm/pkg)
-  routes/
-    +layout.svelte   Persistent shell
-    +page.svelte     Home page
-    */+page.svelte   Route pages (SvelteKit file-based routing)
-```
+`docs/CONVENTIONS.md` and `docs/DEVELOPMENT.md` are the two docs written before the
+implementation lands; card B4 re-checks them against the shipped code rather than
+rewriting them. Anything in this file that names an "A1/A2/A6 deliverable" is the point to
+re-verify at B4.
