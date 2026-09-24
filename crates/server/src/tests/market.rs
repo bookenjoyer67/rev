@@ -655,8 +655,8 @@ mod offer_tests {
         OfferRequest, MAX_NOTE_CHARS,
     };
     use crate::db::conversations::{
-        check_accept_actor, check_accept_allowed, check_transition, Thread, NOTHING_TO_ACCEPT,
-        SELF_ACCEPT,
+        check_accept_actor, check_accept_allowed, check_offer_allowed, check_transition, Thread,
+        NOTHING_TO_ACCEPT, SELF_ACCEPT,
     };
 
     fn request(kind: &str) -> OfferRequest {
@@ -1132,5 +1132,590 @@ mod offer_tests {
             DB_CONVERSATIONS.contains("ORDER BY created_at ASC, id ASC"),
             "list_offers must order by created_at and then by id"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // M2 addendum — three P2s found while verifying M2 at runtime
+    // -----------------------------------------------------------------------
+
+    /// Addendum 2: a `decline` withdraws the thread, and a withdrawn thread still accepted a new
+    /// offer row. An offer appended after the end renders as a live number waiting for an answer
+    /// that can never come.
+    #[test]
+    fn a_thread_that_is_over_does_not_take_a_new_offer() {
+        check_offer_allowed(MatchStatus::Proposed).expect("a live negotiation takes offers");
+        check_offer_allowed(MatchStatus::Accepted)
+            .expect("a counter after an accept is renegotiation, not a reopened deal");
+
+        for over in [MatchStatus::Withdrawn, MatchStatus::Completed] {
+            let err = check_offer_allowed(over)
+                .expect_err("a thread that is over must refuse a new offer");
+            assert!(
+                err.contains(over.as_str()),
+                "the 409 must name the status the thread is in, got: {err}"
+            );
+            assert!(
+                err.contains("offer"),
+                "the 409 must say what was refused, got: {err}"
+            );
+        }
+    }
+
+    /// The two rules are deliberately different and must stay that way: `accepted` is a legal
+    /// place to counter from, and not a legal place to accept from.
+    #[test]
+    fn appending_an_offer_and_accepting_one_are_allowed_in_different_states() {
+        check_offer_allowed(MatchStatus::Accepted).expect("countering an accepted deal is legal");
+        check_accept_allowed(MatchStatus::Accepted)
+            .expect_err("accepting twice is not, or the agreed price is rewritten");
+    }
+
+    /// Addendum 1: an outsider reading a thread got a **500** carrying "conversation not found",
+    /// because the query folded "no such thread" and "not your thread" into one error, while
+    /// `.../offers` answered the same person a correct 403.
+    ///
+    /// The guard is one shared function (`participant_thread`) and it needs a database to run, so
+    /// what is pinned here is that the read goes through it at all — the status codes themselves
+    /// are the card's runtime gate.
+    #[test]
+    fn the_thread_read_refuses_an_outsider_through_the_same_guard_the_offer_routes_use() {
+        const API_CONVERSATIONS: &str = include_str!("../api/conversations.rs");
+
+        let get_conversation = API_CONVERSATIONS
+            .split("async fn get_conversation")
+            .nth(1)
+            .expect("api::conversations must still have a get_conversation handler");
+        let body = &get_conversation[..get_conversation
+            .find("\nasync fn ")
+            .unwrap_or(get_conversation.len())];
+
+        assert!(
+            body.contains("participant_thread("),
+            "the thread read must resolve the 404/403 pair the way every other route on a \
+             thread does, or a non-participant gets a 500 again"
+        );
+    }
+
+    /// Addendum 3: two matches on one listing could each be accepted and each be completed, and
+    /// the second completion rewrote `posts.sold_at` and `posts.buyer_id` — so the listing
+    /// recorded the wrong buyer and the first buyer's completed deal pointed at a sale that was
+    /// no longer theirs.
+    #[test]
+    fn only_the_first_completion_sells_a_listing() {
+        const DB_CONVERSATIONS: &str = include_str!("../db/conversations.rs");
+
+        assert!(
+            DB_CONVERSATIONS.contains("this listing is already sold"),
+            "completing a deal on a listing that already has sold_at must be a 409"
+        );
+        assert!(
+            DB_CONVERSATIONS.contains("FOR UPDATE OF p"),
+            "the sold check must hold the post row for the rest of the transaction, or two \
+             completions racing on one listing both read NULL and both write"
+        );
+    }
+}
+
+/// M3.5 — trust: star ratings and written reviews.
+///
+/// The same split as M1 and M2 above. What is pinned here is every rule a review passes through
+/// that does not need a database — the rating range, the body bounds, the completed-deal
+/// requirement, who the reviewee is, the pagination convention — and the card's runtime curl gate
+/// proves the status codes and the aggregate arithmetic those rules produce against real rows.
+#[cfg(test)]
+mod review_tests {
+    use uuid::Uuid;
+
+    use komun_core::models::{MatchStatus, PostKind};
+
+    use crate::api::categories::bad_request;
+    use crate::api::reviews::{
+        validate_page, validate_review, ReviewPage, ReviewRequest, MAX_BODY_CHARS, MAX_RATING,
+        MIN_RATING,
+    };
+    use crate::db::conversations::Thread;
+    use crate::db::posts::{DEFAULT_LIMIT, MAX_LIMIT};
+    use crate::db::reviews::{check_reviewable, ALREADY_REVIEWED};
+
+    const DB_REVIEWS: &str = include_str!("../db/reviews.rs");
+    const API_REVIEWS: &str = include_str!("../api/reviews.rs");
+    const DB_USERS: &str = include_str!("../db/users.rs");
+    const SCHEMA: &str = include_str!("../../../../migrations/001_schema.sql");
+
+    fn rated(rating: serde_json::Value) -> ReviewRequest {
+        ReviewRequest {
+            rating: Some(rating),
+            ..Default::default()
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // M3.1 — the review body
+    // -----------------------------------------------------------------------
+
+    /// The happy path: every star the `CHECK` allows is accepted, with or without a written note.
+    #[test]
+    fn every_rating_the_check_allows_is_accepted() {
+        for stars in MIN_RATING..=MAX_RATING {
+            let valid = validate_review(&rated(stars.into()))
+                .unwrap_or_else(|e| panic!("{stars} stars must be accepted: {e}"));
+            assert_eq!(valid.rating, stars as i16);
+            assert_eq!(valid.body, None, "a body is optional");
+        }
+
+        let valid = validate_review(&ReviewRequest {
+            rating: Some(5.into()),
+            body: Some("Smooth pickup".to_string()),
+        })
+        .expect("a review with a note is the ordinary case");
+        assert_eq!(valid.rating, 5);
+        assert_eq!(valid.body.as_deref(), Some("Smooth pickup"));
+    }
+
+    /// The card's two: `0` and `6`. Both are 400s here rather than constraint violations arriving
+    /// as 500s from `chk_deal_reviews_rating`.
+    #[test]
+    fn a_rating_outside_the_star_range_is_a_400_that_states_the_range() {
+        for stars in [0, 6, -1, 100, i64::MIN, i64::MAX] {
+            let err = validate_review(&rated(stars.into()))
+                .unwrap_err_or_panic(&format!("{stars} is not a star rating"));
+            assert!(err.contains("rating"), "the 400 must name the field, got: {err}");
+            assert!(
+                err.contains(&MIN_RATING.to_string()) && err.contains(&MAX_RATING.to_string()),
+                "the 400 must state the range, got: {err}"
+            );
+            assert!(
+                err.contains(&stars.to_string()),
+                "the 400 must echo the bad value, got: {err}"
+            );
+        }
+    }
+
+    /// A rating is a whole number of stars. `4.5` and `"5"` are both things a client sends, and
+    /// both have to be a 400 naming the field — which is why the field arrives as a
+    /// `serde_json::Value` rather than as an `i16` that serde would reject with a 422.
+    #[test]
+    fn a_rating_that_is_not_a_whole_number_is_a_400_rather_than_a_422() {
+        for not_a_rating in [
+            serde_json::json!(4.5),
+            serde_json::json!("5"),
+            serde_json::json!(true),
+            serde_json::json!([5]),
+            serde_json::json!({"stars": 5}),
+        ] {
+            let err = validate_review(&rated(not_a_rating.clone()))
+                .unwrap_err_or_panic(&format!("{not_a_rating} is not a rating"));
+            assert!(err.contains("rating"), "the 400 must name the field, got: {err}");
+            assert!(
+                err.contains("whole number"),
+                "the 400 must say what a rating is, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_missing_rating_is_a_400_that_says_what_the_field_takes() {
+        for raw in [ReviewRequest::default(), rated(serde_json::Value::Null)] {
+            let err = validate_review(&raw).unwrap_err_or_panic("a review with no rating");
+            assert!(err.contains("rating"), "the 400 must name the field, got: {err}");
+            assert!(
+                err.contains(&MAX_RATING.to_string()),
+                "the 400 must state the range, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_is_optional_trimmed_and_bounded() {
+        let valid = validate_review(&ReviewRequest {
+            rating: Some(5.into()),
+            body: Some("  Smooth pickup, arrived on time  ".to_string()),
+        })
+        .expect("a written review is legal");
+        assert_eq!(valid.body.as_deref(), Some("Smooth pickup, arrived on time"));
+
+        for blank in ["", "   ", "\n\t"] {
+            let valid = validate_review(&ReviewRequest {
+                rating: Some(4.into()),
+                body: Some(blank.to_string()),
+            })
+            .expect("a blank body is no body");
+            assert_eq!(
+                valid.body, None,
+                "a whitespace-only body must be stored as NULL, not as spaces"
+            );
+        }
+
+        let at_limit = "x".repeat(MAX_BODY_CHARS);
+        assert_eq!(
+            validate_review(&ReviewRequest {
+                rating: Some(5.into()),
+                body: Some(at_limit.clone()),
+            })
+            .expect("the limit itself is legal")
+            .body,
+            Some(at_limit)
+        );
+
+        let err = validate_review(&ReviewRequest {
+            rating: Some(5.into()),
+            body: Some("x".repeat(MAX_BODY_CHARS + 1)),
+        })
+        .unwrap_err_or_panic("one character past the limit");
+        assert!(err.contains("body"), "the 400 must name the field, got: {err}");
+        assert!(
+            err.contains(&MAX_BODY_CHARS.to_string()),
+            "the 400 must state the limit, got: {err}"
+        );
+    }
+
+    /// Characters, not bytes — the same rule an offer note counts by.
+    #[test]
+    fn the_body_limit_counts_characters_not_bytes() {
+        let cyrillic = "\u{434}".repeat(MAX_BODY_CHARS);
+        assert!(
+            cyrillic.len() > MAX_BODY_CHARS,
+            "the fixture must actually be longer in bytes than in characters"
+        );
+        validate_review(&ReviewRequest {
+            rating: Some(5.into()),
+            body: Some(cyrillic),
+        })
+        .expect("2,000 characters is 2,000 characters in any script");
+    }
+
+    /// The message assertions above cannot see a status code; this pins the mapping every one of
+    /// them goes through on the way out of the handler.
+    #[test]
+    fn a_rejected_review_body_leaves_as_a_400() {
+        use axum::response::IntoResponse;
+
+        let err = validate_review(&rated(6.into())).unwrap_err_or_panic("6 stars");
+        let response = bad_request(err).into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    // -----------------------------------------------------------------------
+    // M3.1 — who may review, whom, and when
+    // -----------------------------------------------------------------------
+
+    /// SPEC B4: "writable only against a completed deal". The card's example message is pinned
+    /// verbatim, because naming the status is the whole difference between a 409 a client can act
+    /// on and one that only says they were wrong.
+    #[test]
+    fn a_review_is_only_writable_against_a_completed_deal() {
+        check_reviewable(MatchStatus::Completed).expect("a completed deal is reviewable");
+
+        assert_eq!(
+            check_reviewable(MatchStatus::Accepted)
+                .unwrap_err_or_panic("an accepted deal is not done yet"),
+            "this deal is not completed (status: accepted)"
+        );
+
+        for open in [
+            MatchStatus::Proposed,
+            MatchStatus::Accepted,
+            MatchStatus::Withdrawn,
+        ] {
+            let err = check_reviewable(open)
+                .unwrap_err_or_panic("only a completed deal may be reviewed");
+            assert!(
+                err.contains(open.as_str()),
+                "the 409 must name the current status, got: {err}"
+            );
+            assert!(
+                err.contains("not completed"),
+                "the 409 must say what is missing, got: {err}"
+            );
+        }
+    }
+
+    /// Every status the `CHECK` allows is on one side of that line, so a fifth one added later is
+    /// decided here rather than by whichever branch happens to run.
+    #[test]
+    fn exactly_one_status_is_reviewable() {
+        for status in MatchStatus::ALL {
+            assert_eq!(
+                check_reviewable(*status).is_ok(),
+                *status == MatchStatus::Completed,
+                "{status} must be reviewable exactly when it is the completed one"
+            );
+        }
+    }
+
+    /// M3.1: the reviewee is the OTHER participant, never a field the client supplies — a
+    /// completed deal would otherwise be a licence to attach a one-star review to a stranger.
+    /// `None` is the 403, so the non-participant check and the reviewee lookup are one step and
+    /// cannot disagree.
+    #[test]
+    fn the_reviewee_is_the_other_participant_and_a_stranger_has_none() {
+        let author = Uuid::now_v7();
+        let responder = Uuid::now_v7();
+        let stranger = Uuid::now_v7();
+
+        let thread = Thread {
+            responder_id: responder,
+            author_id: author,
+            post_kind: PostKind::Listing,
+            post_currency: Some("USD".to_string()),
+        };
+
+        assert_eq!(
+            thread.other_participant(author),
+            Some(responder),
+            "the seller reviews the buyer"
+        );
+        assert_eq!(
+            thread.other_participant(responder),
+            Some(author),
+            "and the buyer reviews the seller"
+        );
+        assert_eq!(
+            thread.other_participant(stranger),
+            None,
+            "anyone else has no counterparty here: this is the 403"
+        );
+    }
+
+    /// M3.2 — an unverified account cannot review.
+    ///
+    /// The rule is not re-implemented in this module: `require_auth` already refuses every
+    /// mutating method from an unverified account (SPEC Part 1.5), which is what makes reviewing
+    /// obey the same rule as posting, responding and messaging instead of a fourth copy of it
+    /// that can drift. What is pinned here is that the write route is behind that middleware and
+    /// not behind `require_session`, which authenticates without demanding verification; the 403
+    /// itself is the card's runtime gate.
+    #[test]
+    fn writing_a_review_goes_through_the_middleware_that_refuses_unverified_accounts() {
+        assert!(
+            API_REVIEWS.contains("require_auth"),
+            "the review write route must be layered with require_auth"
+        );
+        assert!(
+            !API_REVIEWS.contains("require_session"),
+            "require_session authenticates without demanding a verified address: an unverified \
+             account would be able to review"
+        );
+        assert!(
+            API_REVIEWS.contains("post(create_review)"),
+            "the fixture path must be wrong: no review write route was found at all"
+        );
+    }
+
+    /// M3.1: one review per (match, reviewer), and the constraint that enforces it has to arrive
+    /// as a 409. An unmapped `23505` leaves as an anyhow error and is reported to the reviewer as
+    /// "internal error" — which reads as a server fault rather than as "you already did this".
+    #[test]
+    fn a_duplicate_review_is_mapped_from_the_constraint_to_a_conflict() {
+        assert_eq!(ALREADY_REVIEWED, "you have already reviewed this deal");
+
+        assert!(
+            SCHEMA.contains("UNIQUE (match_id, reviewer_id)"),
+            "the one-review-per-deal rule is the database's, and this is the constraint"
+        );
+        assert!(
+            DB_REVIEWS.contains("23505"),
+            "the unique violation must be mapped explicitly, or it surfaces as a 500"
+        );
+        assert!(
+            DB_REVIEWS.contains("DealStep::Conflict(ALREADY_REVIEWED"),
+            "the mapped violation must become the 409's message"
+        );
+    }
+
+    /// Reviews are a record, not a draft: there is no path that rewrites or removes one, for the
+    /// same reason `match_offers` is append-only. A rating somebody can edit after the fact is not
+    /// a rating anyone else can rely on.
+    #[test]
+    fn no_code_updates_or_deletes_a_review_row() {
+        let statements: Vec<&str> = DB_REVIEWS
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.starts_with("//"))
+            .filter(|line| {
+                let upper = line.to_uppercase();
+                (upper.contains("UPDATE ") || upper.contains("DELETE "))
+                    && upper.contains("DEAL_REVIEWS")
+            })
+            .collect();
+
+        assert!(
+            statements.is_empty(),
+            "deal_reviews is append-only, but this module rewrites it: {statements:?}"
+        );
+        assert!(
+            DB_REVIEWS.contains("INSERT INTO deal_reviews"),
+            "the fixture path must be wrong: no insert into deal_reviews was found at all"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // M3.3 — the public list
+    // -----------------------------------------------------------------------
+
+    /// The same limit/offset convention `GET /api/posts` uses, over the same two constants: a
+    /// client that has learned one list endpoint has learned this one.
+    #[test]
+    fn the_review_list_paginates_the_way_every_other_list_endpoint_does() {
+        assert_eq!(
+            validate_page(&ReviewPage::default()).expect("no parameters is a legal page"),
+            (DEFAULT_LIMIT, 0),
+            "an unbounded list is not an option"
+        );
+
+        assert_eq!(
+            validate_page(&ReviewPage {
+                limit: Some("20".to_string()),
+                offset: Some("40".to_string()),
+            })
+            .expect("a page is legal"),
+            (20, 40)
+        );
+
+        assert_eq!(
+            validate_page(&ReviewPage {
+                limit: Some(MAX_LIMIT.to_string()),
+                offset: None,
+            })
+            .expect("the maximum is legal")
+            .0,
+            MAX_LIMIT
+        );
+
+        // A blank parameter is an untouched form field, not a rejection.
+        assert_eq!(
+            validate_page(&ReviewPage {
+                limit: Some("  ".to_string()),
+                offset: Some(String::new()),
+            })
+            .expect("blank parameters must not be errors"),
+            (DEFAULT_LIMIT, 0)
+        );
+    }
+
+    /// Rejected rather than clamped, for the reason `GET /api/posts` gives: a caller handed 200
+    /// when it asked for 5,000 has no way to know its pagination is wrong.
+    #[test]
+    fn a_bad_page_names_the_parameter_it_refuses() {
+        for bad in [
+            "0".to_string(),
+            "-5".to_string(),
+            (MAX_LIMIT + 1).to_string(),
+            "all".to_string(),
+        ] {
+            let err = validate_page(&ReviewPage {
+                limit: Some(bad.clone()),
+                offset: None,
+            })
+            .unwrap_err_or_panic(&format!("limit {bad:?}"));
+            assert!(
+                err.starts_with("limit "),
+                "the 400 must name the parameter for {bad:?}, got: {err}"
+            );
+        }
+
+        let err = validate_page(&ReviewPage {
+            limit: None,
+            offset: Some("-1".to_string()),
+        })
+        .unwrap_err_or_panic("a negative offset");
+        assert!(err.starts_with("offset "), "the 400 must name the parameter, got: {err}");
+    }
+
+    /// M3.3: newest first, attributed, with a deterministic tie-break — without which a row can
+    /// appear on two pages or on none when two reviews land in the same microsecond.
+    #[test]
+    fn reviews_come_back_newest_first_and_carry_who_wrote_them() {
+        assert!(
+            DB_REVIEWS.contains("ORDER BY r.created_at DESC, r.id DESC"),
+            "the list must be newest first with a deterministic tie-break"
+        );
+        assert!(
+            DB_REVIEWS.contains("u.display_name AS reviewer_display_name"),
+            "SPEC B4: reviews are attributed, never anonymous"
+        );
+        assert!(
+            DB_REVIEWS.contains("LIMIT $2 OFFSET $3"),
+            "the list must be paginated in SQL, not after fetching every row"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // M3.4 — the aggregate on the profile
+    // -----------------------------------------------------------------------
+
+    /// The aggregate is computed from the rows on every read. A counter column would be a second
+    /// answer to the same question whose only distinguishing ability is to disagree with the
+    /// first — and the schema is frozen, so there is nowhere to put one anyway.
+    ///
+    /// The arithmetic itself (5 and 4 → 4.5 over 2 reviews; `null`/0 for a user with none) is the
+    /// card's runtime gate, against real rows in a real database.
+    #[test]
+    fn the_profile_aggregate_is_computed_from_the_reviews_not_from_a_counter() {
+        assert!(
+            DB_USERS.contains("FROM deal_reviews WHERE reviewee_id = u.id"),
+            "rating_avg and rating_count must be computed from the review rows"
+        );
+        assert!(
+            DB_USERS.contains("ROUND(AVG(rating), 1)"),
+            "M3.4: the mean is reported to one decimal"
+        );
+        assert!(
+            DB_USERS.contains("COUNT(*)::bigint as rating_count"),
+            "the count must come from the same rows as the mean"
+        );
+
+        // No denormalised counter, and no schema change: `users` carries neither column.
+        let users_table = SCHEMA
+            .split("CREATE TABLE users")
+            .nth(1)
+            .expect("the schema creates a users table");
+        let users_table = &users_table[..users_table.find(");").expect("the table is terminated")];
+        for column in ["rating_avg", "rating_count", "rating_total", "review_count"] {
+            assert!(
+                !users_table.contains(column),
+                "M3.4 forbids a denormalised counter, but `users` has {column}"
+            );
+        }
+    }
+
+    /// `null` and `0.0` are different facts: one is "no deals reviewed yet", the other is a
+    /// rating no star range can produce. A new trader must not be indistinguishable from a
+    /// rated-zero one, which is what an `AVG` coalesced to zero would make them.
+    #[test]
+    fn an_unreviewed_user_has_no_average_rather_than_an_average_of_zero() {
+        assert!(
+            !DB_USERS.contains("COALESCE(r.rating_avg"),
+            "coalescing the mean would report an unreviewed user as rated 0.0"
+        );
+        assert!(
+            DB_USERS.contains("COALESCE(r.rating_count, 0)"),
+            "a count, unlike a mean, does have a right answer when there are no rows: 0"
+        );
+
+        // The field is an Option, so `None` serialises as JSON `null` rather than as 0.
+        assert!(
+            DB_USERS.contains("pub rating_avg: Option<f64>"),
+            "rating_avg must be nullable all the way out to the JSON"
+        );
+        assert!(
+            DB_USERS.contains("pub rating_count: i64"),
+            "rating_count is never null: zero reviews is a number"
+        );
+    }
+
+    /// A tiny helper so every negative case above reads the same way and none of them can pass by
+    /// accidentally succeeding.
+    trait UnwrapErrOrPanic {
+        fn unwrap_err_or_panic(self, what: &str) -> String;
+    }
+
+    impl<T: std::fmt::Debug> UnwrapErrOrPanic for Result<T, String> {
+        fn unwrap_err_or_panic(self, what: &str) -> String {
+            match self {
+                Err(why) => why,
+                Ok(value) => panic!("{what} must be refused, but it was accepted as {value:?}"),
+            }
+        }
     }
 }

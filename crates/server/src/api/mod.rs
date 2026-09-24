@@ -8,6 +8,7 @@ pub(crate) mod conversations;
 mod endorsements;
 mod error;
 pub(crate) mod posts;
+pub(crate) mod reviews;
 mod health;
 mod node;
 mod notifications;
@@ -42,8 +43,20 @@ pub fn router(state: AppState) -> Router {
         .merge(categories::router(state.clone()))
         .merge(reports::router(state.clone()))
         .merge(search::router(state.clone()))
+        // M3.1: writing a review hangs off the deal it is about, so it is mounted at
+        // `/matches/{id}/reviews` rather than under `/conversations` — the thread is where the
+        // negotiation happened, the match is what was completed.
+        .merge(reviews::router(state.clone()))
         .nest("/auth", auth::router(state.clone()))
-        .nest("/users", users::router(state.clone()).merge(endorsements::router(state.clone())))
+        // M3.3: reading somebody's reviews is a fact about that profile, so it joins the `/users`
+        // nest beside endorsements instead of being a second top-level `/users` route — which
+        // axum would have to resolve against this very nest.
+        .nest(
+            "/users",
+            users::router(state.clone())
+                .merge(endorsements::router(state.clone()))
+                .merge(reviews::user_router(state.clone())),
+        )
         // A3.1: posts are a flat, server-wide collection now — no tenant segment in the path.
         .nest("/posts", posts::router(state.clone()));
 

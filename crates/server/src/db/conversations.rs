@@ -428,6 +428,22 @@ impl Thread {
     pub fn is_participant(&self, user_id: Uuid) -> bool {
         user_id == self.responder_id || user_id == self.author_id
     }
+
+    /// M3: who the other side of this deal is.
+    ///
+    /// The reviewee is derived from the thread and is never a field the client supplies — a
+    /// request that named its own reviewee would let anyone with a completed deal attach a
+    /// one-star review to a stranger. `None` is the 403: somebody who is not on this thread has
+    /// no counterparty here.
+    pub fn other_participant(&self, user_id: Uuid) -> Option<Uuid> {
+        if user_id == self.author_id {
+            Some(self.responder_id)
+        } else if user_id == self.responder_id {
+            Some(self.author_id)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(FromRow)]
@@ -560,7 +576,31 @@ async fn insert_offer(
     row.try_into()
 }
 
-/// M2.1 — an `offer` or a `counter`: a pure append that moves no state.
+/// Whether a thread in `current` may have a new `offer` or `counter` appended to it.
+///
+/// M2 addendum: a negotiation that is over is over. A `withdrawn` thread took a decline and a
+/// `completed` one took a deal, and a number appended after either reads, to anyone rendering the
+/// trail, as a live offer waiting for an answer that can never come.
+///
+/// The two live states are both open on purpose: a counter after an accept is how a deal that
+/// turned out to be wrong gets renegotiated before completion, and refusing it would send that
+/// conversation off the thread the reviews are anchored to.
+pub fn check_offer_allowed(current: MatchStatus) -> Result<(), String> {
+    match current {
+        MatchStatus::Proposed | MatchStatus::Accepted => Ok(()),
+        // Names the status for the same reason `check_transition` does: it is the one fact the
+        // caller does not have.
+        _ => Err(format!(
+            "this conversation is '{current}' and can no longer take new offers"
+        )),
+    }
+}
+
+/// M2.1 — an `offer` or a `counter`: an append that moves no state of its own.
+///
+/// It still runs under the row lock, because *whether* it may be appended turns on a status
+/// another request can be changing at the same moment. Without the lock, a decline committing
+/// between the check and the insert leaves a fresh offer sitting under a closed thread.
 pub async fn append_offer(
     pool: &PgPool,
     match_id: Uuid,
@@ -569,9 +609,18 @@ pub async fn append_offer(
     amount_cents: Option<i64>,
     currency: Option<&str>,
     note: Option<&str>,
-) -> Result<OfferRow> {
-    let mut conn = pool.acquire().await?;
-    insert_offer(&mut conn, match_id, actor_id, kind, amount_cents, currency, note).await
+) -> Result<DealStep<OfferRow>> {
+    let mut tx = pool.begin().await?;
+
+    let status = lock_status(&mut tx, match_id).await?;
+    if let Err(why) = check_offer_allowed(status) {
+        return Ok(DealStep::Conflict(why));
+    }
+
+    let row = insert_offer(&mut tx, match_id, actor_id, kind, amount_cents, currency, note).await?;
+
+    tx.commit().await?;
+    Ok(DealStep::Done(row))
 }
 
 /// M2.2 — the whole negotiation, oldest first.
@@ -595,7 +644,14 @@ pub async fn list_offers(pool: &PgPool, match_id: Uuid) -> Result<Vec<OfferRow>>
 }
 
 /// Read the thread's status with the row locked for the rest of the transaction.
-async fn lock_status(conn: &mut sqlx::PgConnection, match_id: Uuid) -> Result<MatchStatus> {
+///
+/// `pub(crate)` since M3: writing a review also turns on the thread's status, and it has to read
+/// that status the same way every other decision on this thread does — under the row lock, inside
+/// the transaction that acts on the answer.
+pub(crate) async fn lock_status(
+    conn: &mut sqlx::PgConnection,
+    match_id: Uuid,
+) -> Result<MatchStatus> {
     let status: String =
         sqlx::query_scalar("SELECT status FROM matches WHERE id = $1 FOR UPDATE")
             .bind(match_id)
@@ -722,6 +778,31 @@ pub async fn update_status(
     let from = lock_status(&mut tx, match_id).await?;
     if let Err(why) = check_transition(from, to) {
         return Ok(DealStep::Conflict(why));
+    }
+
+    // M2 addendum: one listing, one sale. Two matches on the same post can each legally reach
+    // `accepted` — the seller may well be talking to two buyers — but only the first to complete
+    // is the sale. Without this, the second completion silently rewrote `sold_at` and `buyer_id`,
+    // so the post recorded the wrong buyer and the first buyer's completed deal pointed at a sale
+    // that was no longer theirs.
+    //
+    // `FOR UPDATE OF p` locks the post for the rest of this transaction, so two completions
+    // racing on one listing serialise here rather than both reading NULL and both writing.
+    if to == MatchStatus::Completed {
+        let sold_at: Option<Option<DateTime<Utc>>> = sqlx::query_scalar(
+            r#"SELECT p.sold_at
+               FROM posts p
+               JOIN matches m ON m.post_id = p.id
+               WHERE m.id = $1
+               FOR UPDATE OF p"#,
+        )
+        .bind(match_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some(Some(_)) = sold_at {
+            return Ok(DealStep::Conflict("this listing is already sold".to_string()));
+        }
     }
 
     // `resolved_at` marks the end of a thread, so only the two terminal statuses set it.
