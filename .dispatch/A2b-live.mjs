@@ -25,7 +25,9 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 const BASE = 'http://127.0.0.1:3011';
-const DB = ['-h', 'komun-db-a', '-U', 'komun', '-d', 'komun_a'];
+// The database target must be parameterised, not hardcoded: A6.0 fixed exactly this in A3-live.mjs after it
+// silently queried the wrong database. Point KOMUN_DB at whatever the server under test is configured with.
+const DB = ['-h', 'komun-db-a', '-U', 'komun', '-d', process.env.KOMUN_DB || 'komun_a'];
 
 let failures = 0;
 let checks = 0;
