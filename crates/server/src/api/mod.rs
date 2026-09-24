@@ -1,9 +1,10 @@
 mod reports;
 mod admin;
-// M1: `pub(crate)` on these two only so `crate::tests::market` can unit-test their validators
-// directly. Nothing outside the crate can reach them, and the routers are still mounted here.
+// M1/M2: `pub(crate)` on these three only so `crate::tests::market` can unit-test their
+// validators directly. Nothing outside the crate can reach them, and the routers are still
+// mounted here.
 pub(crate) mod categories;
-mod conversations;
+pub(crate) mod conversations;
 mod endorsements;
 mod error;
 pub(crate) mod posts;
