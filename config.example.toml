@@ -104,3 +104,13 @@ min_password_length = 12
 # User-Agent header. Nominatim's usage policy requires a real contact, and
 # requests may be blocked without one.
 # contact = "admin@example.org"
+
+[market]
+# Fallback currency for marketplace listings that arrive without one of their
+# own, as an ISO-4217 alphabetic code: exactly three uppercase letters. A
+# listing's own currency always wins; this is consulted only when it has none,
+# and when both are absent the listing simply carries no currency.
+# Unset by default, and left commented out deliberately — there is no currency
+# that is right for a server that has not chosen one, and a value here would
+# price every listing on this node in a unit nobody picked. A malformed value
+# is a startup failure naming this key, not a surprise on the first listing.

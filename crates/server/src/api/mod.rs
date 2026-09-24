@@ -1,9 +1,12 @@
 mod reports;
 mod admin;
+// M1: `pub(crate)` on these two only so `crate::tests::market` can unit-test their validators
+// directly. Nothing outside the crate can reach them, and the routers are still mounted here.
+pub(crate) mod categories;
 mod conversations;
 mod endorsements;
 mod error;
-mod posts;
+pub(crate) mod posts;
 mod health;
 mod node;
 mod notifications;
@@ -32,6 +35,10 @@ pub fn router(state: AppState) -> Router {
         .merge(conversations::router(state.clone()))
         .merge(notifications::router(state.clone()))
         .merge(admin::router(state.clone()))
+        // M1.2/M1.3: the public taxonomy and its admin editor. Mounted flat rather than nested
+        // because the two halves live under different path prefixes (`/categories` and
+        // `/admin/categories`) and behind different guards.
+        .merge(categories::router(state.clone()))
         .merge(reports::router(state.clone()))
         .merge(search::router(state.clone()))
         .nest("/auth", auth::router(state.clone()))

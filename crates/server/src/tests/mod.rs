@@ -3,6 +3,10 @@
 //! and told us nothing about whether the scheme was sound. What is tested now is the behaviour
 //! the SPEC actually demands: passwords, timing, single-use tokens and session revocation.
 
+/// M1 — the marketplace foundation: `[market]` config, category scopes, market filters.
+#[cfg(test)]
+mod market;
+
 /// A2.2 — the server-side half of the password path.
 #[cfg(test)]
 mod password_tests {
