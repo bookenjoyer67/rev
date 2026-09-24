@@ -76,7 +76,12 @@ Proposed Fixes:
   because no frozen dimension grades it; it needs a rubric change first, and editing the rubric after
   seeing this run is exactly what the module forbids. Fix 2 lands in the cycle after this one.
 
-Changes made: Pending.
+Changes made:
+- **Fix 1** — `agent: komun-contract-auditor v0.1.1 -- require verbatim evidence for every verdict`
+  (`8cc3d7c`): added the "Evidence rules" section to `.claude/agents/komun-contract-auditor.md`,
+  requiring verbatim quoted evidence next to every `path:line`, a fresh command behind every number,
+  and the full output of any "the only X" search.
+- **Fix 2** — deferred to the next cycle (no frozen dimension grades it; see Proposed Fixes).
 
 ## Run 004 — 2026-09-24 — prompt revision (evidence citation)
 
