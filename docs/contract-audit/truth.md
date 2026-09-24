@@ -98,3 +98,7 @@ Run 002 log entry; the Run 001 entry is not rewritten.
 - `scripts/sync-server-repo.sh:15` rsyncs `crates/relay/`, a directory that no longer exists.
 - `web/static/manifest.json:4` still describes the app as "Federated".
 - `data/avatars/*.webp` are committed runtime uploads and are not gitignored.
+
+Count note: the Run 001 log entry refers to "25 statically settleable claims". That was the first
+capture's row count before the corrections above; this file's 34 rows (29 verified, 2 contradicted,
+3 not statically settleable) is the corrected instrument. The log entry is not rewritten.
