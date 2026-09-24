@@ -6,14 +6,23 @@
 	import { auth } from '$lib/stores/auth';
 	import LinkPreview from '$lib/components/LinkPreview.svelte';
 	import RespondModal from '$lib/components/RespondModal.svelte';
+	import { formatPrice } from '$lib/api/market';
 	import type { PostLike } from '$lib/api/types';
+
+	/** The marketplace facet a listing/want carries; `PostLike` deliberately omits it. */
+	interface PostDetail extends PostLike {
+		market_listed?: boolean;
+		price_cents?: number | null;
+		currency?: string | null;
+		price_negotiable?: boolean;
+	}
 
 	/**
 	 * A6.1: the permalink for a post. The old form nested the post under a community segment
 	 * and had to resolve that community first; A3 made posts a flat, server-wide collection,
 	 * so the id alone addresses one.
 	 */
-	let post = $state<PostLike | null>(null);
+	let post = $state<PostDetail | null>(null);
 	let error = $state('');
 	let loading = $state(true);
 	let showModal = $state(false);
@@ -79,6 +88,10 @@
 
 			<h1>{post.title}</h1>
 
+			{#if post.market_listed || post.kind === 'listing' || post.kind === 'want'}
+				<p class="market-price">{formatPrice(post.price_cents, post.currency, post.price_negotiable)}</p>
+			{/if}
+
 			{#if post.body}
 				<p class="body">{post.body}</p>
 			{/if}
@@ -105,7 +118,7 @@
 
 			{#if post.status === 'active' && post.author_id && post.author_id !== myUserId}
 				<button class="btn-primary respond-btn" onclick={() => showModal = true}>
-					{#if post.kind === 'need'}I can help{:else if post.kind === 'offer'}Request this{:else}Respond{/if}
+					{#if post.kind === 'need'}I can help{:else if post.kind === 'offer'}Request this{:else if post.kind === 'listing' || post.kind === 'want'}Make an offer{:else}Respond{/if}
 				</button>
 			{/if}
 		</article>
@@ -133,6 +146,7 @@
 	.time { color: var(--text-muted); margin-left: auto; }
 	h1 { font-size: var(--text-2xl); margin-bottom: 0.75rem; }
 	.body { color: var(--text); font-size: var(--text-base); line-height: 1.7; margin-bottom: var(--space-4); white-space: pre-wrap; }
+	.market-price { color: var(--accent); font-size: var(--text-xl); font-weight: 700; margin-bottom: var(--space-4); }
 	.location { color: var(--text-muted); font-size: var(--text-sm); margin-bottom: var(--space-2); }
 	.contact { color: var(--text-muted); font-size: var(--text-sm); margin-bottom: var(--space-2); }
 	.images { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: var(--space-3); }

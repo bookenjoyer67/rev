@@ -103,6 +103,28 @@
             {/if}
         </div>
 
+        <!-- M3.4: the aggregate is computed from `deal_reviews`; a user nobody has reviewed reads
+             "No reviews yet" rather than a zero-star rating no deal can produce. -->
+        <div
+            class="rating-badge"
+            aria-label={profile.rating_count > 0
+                ? `Rated ${profile.rating_avg} out of 5 from ${profile.rating_count} reviews`
+                : 'No reviews yet'}
+        >
+            {#if profile.rating_count > 0}
+                <span class="rating-stars" aria-hidden="true">
+                    {#each [1, 2, 3, 4, 5] as star (star)}{star <= Math.round(profile.rating_avg) ? '★' : '☆'}{/each}
+                </span>
+                <span class="rating-value">{profile.rating_avg}</span>
+                <span class="rating-count"
+                    >({profile.rating_count}
+                    {profile.rating_count === 1 ? 'review' : 'reviews'})</span
+                >
+            {:else}
+                <span class="rating-none">No reviews yet</span>
+            {/if}
+        </div>
+
         {#if profile.bio}
             <div class="bio-section">
                 <p>{profile.bio}</p>
@@ -275,6 +297,30 @@
         background: var(--accent-soft, rgba(30, 255, 157, 0.1));
         color: var(--accent, #1eff9d);
         border: 1px solid var(--accent, #1eff9d);
+    }
+
+    .rating-badge {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.35rem;
+        margin-bottom: 1.25rem;
+        font-size: 0.9rem;
+    }
+
+    .rating-stars {
+        color: var(--warning, #f5a623);
+        letter-spacing: 0.1em;
+    }
+
+    .rating-value {
+        font-weight: 700;
+    }
+
+    .rating-count,
+    .rating-none {
+        color: var(--text-muted);
+        font-size: 0.8rem;
     }
 
     .bio-section {

@@ -6,6 +6,9 @@
 	import { isAuthenticated, auth, getEncryptionSecretKey } from '$lib/stores/auth';
 	import { api } from '$lib/api/client';
 	import { deriveConversationKey, encryptMessage, decryptMessage } from '$lib/crypto';
+	import OfferPanel from '$lib/components/OfferPanel.svelte';
+	import DealReviewModal from '$lib/components/DealReviewModal.svelte';
+	import { listOffers, type Offer } from '$lib/api/offers';
 
 	interface Message {
 		id: string;
@@ -35,7 +38,7 @@
 		messages: Message[];
 	}
 
-	let convo: Conversation | null = $state(null);
+	let convo = $state<Conversation | null>(null);
 	let decryptedMessages: DecryptedMessage[] = $state([]);
 	let newMessage = $state('');
 	let loading = $state(true);
@@ -43,12 +46,22 @@
 	let error = $state('');
 	let sharedKey: string | null = $state(null);
 	let encrypted = $state(false);
+	/** The negotiation trail, fetched for market threads only (see `loadConversation`). */
+	let offers: Offer[] = $state([]);
+	let showReview = $state(false);
+	let statusError = $state('');
 
 	let myUserId = $derived((() => {
 		const server = getActiveServer();
 		if (!server) return null;
 		return $auth.servers?.[server]?.userId || null;
 	})());
+
+	/** Offers are for listings and wanted ads; an aid thread keeps its plain propose/accept flow. */
+	const isMarket = $derived(convo?.post_kind === 'listing' || convo?.post_kind === 'want');
+	const names = $derived<Record<string, string>>(
+		convo ? { [convo.author_id]: convo.author_name, [convo.responder_id]: convo.responder_name } : {}
+	);
 
 	onMount(() => {
 		if (!isConnected() || !isAuthenticated()) {
@@ -64,7 +77,15 @@
 		const matchId = $page.params.id as string;
 		if (!matchId) return;
 		try {
-			convo = await api.conversations.get(matchId);
+			const loaded = await api.conversations.get(matchId);
+			convo = loaded;
+			// A market thread carries a negotiation; an aid thread has none, and asking for one
+			// would be a 400 the page has no use for.
+			if (loaded.post_kind === 'listing' || loaded.post_kind === 'want') {
+				offers = await listOffers(matchId);
+			} else {
+				offers = [];
+			}
 			await setupEncryption();
 			await decryptMessages();
 		} catch (e: any) {
@@ -128,10 +149,20 @@
 		sending = false;
 	}
 
-	async function markFulfilled() {
+	/**
+	 * The deal lifecycle behind `PATCH /api/conversations/{id}/status`. The server names the
+	 * current status in a 409, so the sentence is shown verbatim rather than swallowed: it is the
+	 * one fact that tells the viewer whether the deal moved under them.
+	 */
+	async function setStatus(status: string) {
 		if (!convo) return;
-		await api.conversations.updateStatus(convo.match_id, 'completed');
-		await loadConversation();
+		statusError = '';
+		try {
+			await api.conversations.updateStatus(convo.match_id, status);
+			await loadConversation();
+		} catch (e: any) {
+			statusError = e.message || 'Could not update this conversation.';
+		}
 	}
 
 	function formatTime(dateStr: string): string {
@@ -175,6 +206,41 @@
 			{/each}
 		</div>
 
+		{#if isMarket}
+			<OfferPanel
+				matchId={convo.match_id}
+				postKind={convo.post_kind}
+				status={convo.status}
+				{myUserId}
+				{offers}
+				{names}
+				onchange={loadConversation}
+			/>
+		{/if}
+
+		{#if convo.status === 'completed'}
+			<p class="deal-done">This deal is complete.</p>
+			<button class="review-btn" onclick={() => (showReview = true)}>Leave a review</button>
+		{/if}
+
+		{#if convo.status === 'proposed' || convo.status === 'accepted'}
+			<div class="deal-controls">
+				{#if convo.status === 'accepted'}
+					<button class="complete-btn" onclick={() => setStatus('completed')}>
+						Mark as completed
+					</button>
+				{/if}
+				{#if !isMarket && convo.status === 'proposed' && myUserId === convo.author_id}
+					<button class="accept-btn" onclick={() => setStatus('accepted')}>Accept</button>
+				{/if}
+				<button class="withdraw-btn" onclick={() => setStatus('withdrawn')}>Withdraw</button>
+			</div>
+		{/if}
+
+		{#if statusError}
+			<p class="err" role="alert">{statusError}</p>
+		{/if}
+
 		{#if convo.status !== 'completed' && convo.status !== 'withdrawn'}
 			<form class="send-form" onsubmit={(e) => { e.preventDefault(); sendMessage(); }}>
 				<input
@@ -185,15 +251,23 @@
 				/>
 				<button type="submit" disabled={sending || !newMessage.trim()}>Send</button>
 			</form>
-
-			{#if myUserId === convo.author_id}
-				<button class="fulfill-btn" onclick={markFulfilled}>Mark as fulfilled</button>
-			{/if}
-		{:else}
+		{:else if convo.status === 'withdrawn'}
 			<p class="closed">This conversation has been marked as {convo.status}.</p>
 		{/if}
 	{/if}
 </div>
+
+{#if showReview && convo}
+	<DealReviewModal
+		matchId={convo.match_id}
+		revieweeName={myUserId === convo.author_id ? convo.responder_name : convo.author_name}
+		onClose={() => (showReview = false)}
+		onSubmitted={() => {
+			showReview = false;
+			loadConversation();
+		}}
+	/>
+{/if}
 
 <style>
 	.thread-header {
@@ -293,14 +367,43 @@
 
 	button[type="submit"]:disabled { opacity: 0.5; cursor: not-allowed; }
 
-	.fulfill-btn {
-		width: 100%;
+	.deal-controls {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
 		margin-top: 1rem;
-		background: var(--success);
-		color: var(--text-on-success);
-		padding: 0.75rem;
+	}
+
+	.deal-controls button,
+	.review-btn {
+		padding: 0.6rem 1rem;
 		border-radius: var(--radius);
 		font-weight: 600;
+	}
+
+	.complete-btn,
+	.accept-btn {
+		background: var(--success);
+		color: var(--text-on-success);
+	}
+
+	.withdraw-btn {
+		background: var(--bg-surface);
+		color: var(--critical);
+		border: 1px solid var(--critical);
+	}
+
+	.review-btn {
+		background: var(--accent);
+		color: var(--text-on-accent);
+		margin-top: 0.5rem;
+	}
+
+	.deal-done {
+		text-align: center;
+		color: var(--success);
+		font-weight: 600;
+		padding: 0.75rem 0 0;
 	}
 
 	.closed {
