@@ -106,11 +106,24 @@ min_password_length = 12
 # contact = "admin@example.org"
 
 [market]
-# Fallback currency for marketplace listings that arrive without one of their
-# own, as an ISO-4217 alphabetic code: exactly three uppercase letters. A
-# listing's own currency always wins; this is consulted only when it has none,
-# and when both are absent the listing simply carries no currency.
+# Server-wide marketplace defaults. Everything here is optional.
+#
+# Fallback currency for a marketplace post (`listing` / `want`) that arrives
+# without one of its own, as an ISO-4217 alphabetic code: exactly three uppercase
+# letters. The post's own `currency` always wins; this is consulted only when it
+# has none, and with neither the post keeps no currency (which is allowed) — but
+# an offer or an accept that names an amount is then refused with a 400 naming
+# the missing currency.
+#
+# At negotiation time the rule is stricter, because a deal needs a unit: an offer
+# that names its own `currency` uses it, even when that differs from the post's,
+# and that currency is what the deal records when the offer is accepted. An
+# `accept` must restate `amount_cents`. So the precedence is the offer's own
+# currency, then the post's (which may itself be this value), then a 400.
+#
 # Unset by default, and left commented out deliberately — there is no currency
 # that is right for a server that has not chosen one, and a value here would
-# price every listing on this node in a unit nobody picked. A malformed value
-# is a startup failure naming this key, not a surprise on the first listing.
+# price every listing on this node in a unit nobody picked. A malformed value is
+# a startup failure naming this key, the value and the remedy, not a surprise on
+# the first listing.
+# default_currency = "USD"

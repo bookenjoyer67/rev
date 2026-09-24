@@ -22,8 +22,8 @@ the forbidden round-trip in P4.
 **Enforcement.** `crates/core/src/tests.rs` reads `migrations/001_schema.sql` at test
 time and asserts that each enum's `as_str()` value set equals the `CHECK (col IN (...))`
 list parsed out of the migration, for `PostKind`, `Urgency`, `PostStatus`, `Visibility`,
-`UserRole`, `ItemCondition`, `OfferKind` and `MessageStatus`. `Category` is not an enum:
-it is the seeded `categories` table (SPEC §1.6), so it gets a seed-data test instead.
+`ItemCondition`, `Role`, `MatchStatus`, `OfferKind` and `CategoryScope`. `Category` is not
+an enum: it is the seeded `categories` table (SPEC §1.6), so it gets a seed-data test instead.
 
 **Demonstrated by.** `crates/core/src/models/mod.rs` (`macro_rules! db_enum`),
 `crates/core/src/models/*.rs` (the definitions), and the pinning tests in
@@ -134,3 +134,48 @@ These are the project-level rules that outlive any one card.
   state (or clean up only its own fixtures). And a hardcoded `psql "postgres://…/komun_b"` that
   ignores the server's configured `[database] url` silently reads a different database — the
   harness must query the same database the server under test is configured with.
+
+---
+
+## 7. Marketplace conventions
+
+The marketplace is a facet on the existing posts and threads, so these rules keep it from growing
+a second, parallel system.
+
+- **Market fields belong to market kinds only.** `price_cents`, `currency`, `item_condition`,
+  `price_negotiable` and `market_listed` are legal only on `listing` and `want`. The split is
+  `PostKind::is_market()` and nothing re-implements it; a non-market post that arrives with one is
+  a `400`, not a constraint violation. Authority: `chk_posts_market_fields` in `001_schema.sql`
+  and `crates/server/src/api/posts.rs::validate_market_fields`.
+- **A currency is never invented.** `is_currency_code` is the one ISO-4217 check, shared by
+  `[market] default_currency` at startup, the create-post validator, the `?currency=` filter and an
+  offer's own currency. When a deal has no currency anywhere (offer, post, server default), the
+  offer is refused with a `400` naming the key an operator would set — not priced in a guess.
+  Authority: `crates/server/src/config.rs::is_currency_code` and
+  `api::conversations::resolve_offer_currency`.
+- **The offer trail is append-only.** `match_offers` is written by `INSERT` only; no code path
+  updates or deletes a row, and the list comes back `ORDER BY created_at ASC, id ASC` so a
+  same-microsecond tie still has a deterministic order. A counter that could rewrite the offer it
+  answers is not a record of anything. Authority: `db/conversations.rs`, pinned by
+  `tests/market.rs::no_code_updates_or_deletes_an_offer_row`.
+- **Every status decision is made inside the transaction that acts on it.** `check_transition` is
+  one rule used twice (handler and locked transaction); the thread's status is read under
+  `SELECT … FOR UPDATE`, never from a pre-read a concurrent request can invalidate. Completing a
+  deal and selling the listing commit together. Authority:
+  `db/conversations.rs::update_status` and
+  `tests/market.rs::the_transition_matrix_allows_exactly_five_moves`.
+- **Only a completed deal is reviewable, once per participant, and never edited.** The reviewer's
+  counterparty (`reviewee_id`) is derived from the thread, never supplied by the client;
+  `UNIQUE (match_id, reviewer_id)` is mapped to a `409`, not left as a `500`; there is no update or
+  delete path. Authority: `db/reviews.rs` and SPEC B4.
+- **Ratings are computed, not stored.** `rating_avg`/`rating_count` on a profile come from
+  `deal_reviews` on every read; `users` has no counter column, and the schema is frozen so there is
+  nowhere to add one. Authority: `db/users.rs::get_profile` and
+  `tests/market.rs::the_profile_aggregate_is_computed_from_the_reviews_not_from_a_counter`.
+- **Categories are data.** The taxonomy is the `categories` table; a slug is an immutable
+  identifier (`posts.category` references it), so an admin retires a row with `active = false`
+  instead of deleting it, and a label rename re-runs the FTS update for the category's posts.
+  Authority: `db/categories.rs` and SPEC §1.6/§D1.4.
+- **`[market] default_currency` is validated at startup.** A malformed value refuses to boot and
+  names the key, the value and the remedy, rather than surfacing as a `500` on the first listing.
+  Authority: `config.rs::validate_market`.

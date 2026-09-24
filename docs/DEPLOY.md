@@ -35,7 +35,8 @@ install -m 0755 target/release/komun-server /opt/komun/
 install -m 0644 config.example.toml /opt/komun/config.toml
 # edit /opt/komun/config.toml: [database] url, [node] name/public_url,
 # [registration] (leave require_email_verification = false unless [email] is configured),
-# [email] if you want verification/reset mail, [discovery] for directory listing.
+# [email] if you want verification/reset mail, [discovery] for directory listing,
+# [market] default_currency only if this server should fall back to one for listings.
 chown -R komun:komun /opt/komun
 ```
 
@@ -106,6 +107,11 @@ ignored, which is the safe default.
 - **Media:** avatars and post images live under `[media]` paths inside the working directory —
   include them in backups.
 - **Database:** back up PostgreSQL (the schema, plus the tables in `docs/DATABASE.md`).
+- **Seed (optional):** `psql "$DATABASE_URL" -f deploy/seed.sql` adds demo accounts and posts;
+  the 23 marketplace/aid categories come from `001_schema.sql` and are not in the seed file.
+- **Categories:** the taxonomy is a runtime-editable table (`docs/ARCHITECTURE.md`, "Categories
+  are data"). An admin adds, relabels, reorders or retires a category through
+  `POST`/`PATCH /api/admin/categories`; retiring means `active = false`, never a delete.
 - **Mail (optional):** verification and password-reset mail need `[email] smtp_host` + `from`.
   If you do not run SMTP, keep `[registration] require_email_verification = false`; the server
   otherwise refuses to start.

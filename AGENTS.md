@@ -5,10 +5,11 @@ disagree, fix one of them.
 
 ## What this is
 
-A **single-server** mutual-aid web app. People post needs/offers/resources, search them, and
-negotiate over end-to-end-encrypted conversations. Rust backend (Axum + sqlx, PostgreSQL 16),
-SvelteKit 5 SPA frontend, client crypto in WASM, AGPL-3.0. There is no multi-tenant community
-layer, no federation, and no relay — those were removed in the reshape.
+A **single-server** mutual-aid web app. People post needs/offers/resources and marketplace
+listings/wants, search them, negotiate over end-to-end-encrypted conversations, and — for a
+completed deal — leave a star review. Rust backend (Axum + sqlx, PostgreSQL 16), SvelteKit 5
+SPA frontend, client crypto in WASM, AGPL-3.0. There is no multi-tenant community layer, no
+federation, and no relay — those were removed in the reshape. There are no payment rails.
 
 ## Critical rules
 
@@ -85,9 +86,14 @@ cargo run --bin komun-server              # -> http://localhost:3000
   `require_auth` / `require_admin` / `require_superadmin`, and it loads the role from the DB on
   every request.
 - API: flat `/api/posts`, `/api/search`, `/api/auth/**`, `/api/users/**`, `/api/me/*`,
-  `/api/conversations/*`, `/api/admin/*`; `/api/alliances` and `/api/communities` do not exist.
+  `/api/conversations/*`, `/api/categories`, `/api/admin/*`, `/api/matches/{id}/reviews`. There
+  are no `/api/alliances` and no `/api/communities` routes.
+- Marketplace: `listing` and `want` post kinds carry the price fields; the negotiation on a
+  match thread is the append-only `match_offers` trail; a review is writable only against a
+  `completed` deal. The category taxonomy is the seeded, runtime-editable `categories` table
+  (23 rows), not an enum. See `docs/ARCHITECTURE.md` and `docs/DATABASE.md`.
 - Config is loaded from `config.toml` (or `KOMUN_CONFIG`) with env overrides; the server runs
-  migrations on startup.
+  migrations on startup. `[market] default_currency` is optional and unset by default.
 - Background tasks live in `tasks/` (expiry, health, directory registration, bundle cleanup).
 - The REPL starts when stdin is a terminal (type `help`).
 - The service worker caches assets and API responses; the app is a PWA with standalone display.

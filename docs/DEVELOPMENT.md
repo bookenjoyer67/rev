@@ -25,6 +25,11 @@ cp config.example.toml config.toml
 # minimum: point [database] url at your Postgres
 ```
 
+Everything else in the template has a working default: `[registration]` runs without SMTP
+(`require_email_verification = false`), `[discovery]` mounts no directory routes, and the
+optional `[market]` `default_currency` is unset, which is the intended default — see the
+currency precedence below.
+
 The example config must boot as shipped; see the boot check below.
 
 ## Provisioning a database (the exact order, and why)
@@ -71,6 +76,22 @@ you load `001` by hand *first*, the migrator would then try to create the alread
 tables, fail, and roll back the bookkeeping table with them. So: create the table, load the
 schema, insert the bookmark whose `checksum` equals `sha384sum migrations/001_schema.sql`,
 and let the migrator start at `002`. A wrong or missing checksum makes every later boot fail.
+
+### Optional demo seed
+
+`deploy/seed.sql` adds a handful of demo accounts, aid posts and two marketplace posts (one
+`listing`, one `want`) so a fresh instance has a feed, map pins and a browseable marketplace.
+It is optional and idempotent (`ON CONFLICT (id) DO NOTHING`); it does **not** touch the
+taxonomy, which `001_schema.sql` already seeds:
+
+```bash
+psql "$DATABASE_URL" -f deploy/seed.sql
+# the 23 categories above are the migration's, not this file's:
+psql "$DATABASE_URL" -tAc "select scope, count(*) from categories group by scope order by scope"
+# aid|2
+# both|6
+# market|15
+```
 
 ## Migration rules (easy to get wrong)
 
@@ -148,6 +169,47 @@ curl -s http://127.0.0.1:<port>/api/health      # {"service":"komun","status":"o
 at all**, so they 404 — that is a configuration choice, not a routing bug. `require_email_verification
 = true` without `[email] smtp_host` + `from` makes the server refuse to start; that is
 enforced by `Config::validate_registration` and is the first thing a fresh clone hits.
+
+### Marketplace runtime check
+
+The marketplace adds no new transport: it is the same flat `/api` surface, with `listing`/`want`
+post kinds, offers on a match thread, and reviews against a completed deal. The reference is in
+`docs/ARCHITECTURE.md` ("Marketplace" and "HTTP API"); this is what can be checked without a
+browser. With a server running (the recipe above) and `BASE` pointing at it:
+
+```bash
+BASE=http://127.0.0.1:3000
+
+# The taxonomy is a UNION, not an equality: `market` is the 15 market rows + the 6 `both` rows.
+curl -s "$BASE/api/categories?scope=market"       # 21 rows
+curl -s "$BASE/api/categories?scope=aid"          # 8 rows (2 aid + 6 both)
+curl -s "$BASE/api/categories?scope=both"         # 6 rows
+curl -s -w '\nHTTP %{http_code}\n' "$BASE/api/categories?scope=commercial"   # 400, names aid, market, both
+
+# A market browse is the same feed with a kind filter.
+curl -s "$BASE/api/posts?kind=listing"            # the seeded listing (empty without deploy/seed.sql)
+
+# Offer, status and review writes need a session (Bearer token from POST /api/auth/signin) and a
+# market thread; without one the mutating routes answer 401.
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  "$BASE/api/conversations/00000000-0000-0000-0000-000000000000/offers" \
+  -H 'Content-Type: application/json' -d '{"kind":"offer","amount_cents":100}'   # 401
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  "$BASE/api/matches/00000000-0000-0000-0000-000000000000/reviews" \
+  -H 'Content-Type: application/json' -d '{"rating":5}'                          # 401
+```
+
+The end-to-end walk that proves the deal lifecycle — two accounts (one verified), post a listing,
+respond, `offer` → `counter` → `accept`, `completed`, two reviews, the profile aggregate, and the
+refusals (a second review `409`, a review on an incomplete deal `409`) — is the Phase B exit gate
+and needs a real client (the encrypted opening message and the key bundles are client-side).
+
+**How a price gets a currency.** A `listing`/`want` keeps the `currency` it was created with; with
+none, the server fills in `[market] default_currency` when that key is set, otherwise the post
+simply has no currency. At negotiation time a deal needs a unit, so the accepted order is the
+offer's own `currency`, else the post's, else `[market] default_currency`, and with none of the
+three a `400` names the missing currency. `[market] default_currency` is unset by default and a
+malformed value (e.g. `"cad"`) refuses to start, naming the key, the value and the remedy.
 
 ## Measure a lint/tool gate honestly
 

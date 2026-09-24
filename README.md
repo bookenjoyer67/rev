@@ -23,6 +23,17 @@ The server is the community — there is no multi-tenant layer and no federation
 - **Encrypted conversations.** Message plaintext is encrypted in the browser; the database
   stores ciphertext only. See the honest limitation below.
 - **Flat posts.** One server-wide feed at `/api/posts`, with search, categories and TTLs.
+- **Marketplace.** Post a `listing` or a `want` with a price and condition, negotiate on the same
+  encrypted thread (`offer` → `counter` → `accept`), complete the deal, and leave a star review.
+  Money changes hands in person; there are no payment rails.
+  - **Reviews follow completed deals.** A review is writable only against a `completed` deal, once
+    per participant per deal, and a profile shows the average of a user's ratings to one decimal.
+  - **Categories are data, not an enum.** The taxonomy is the seeded, runtime-editable `categories`
+    table served by `GET /api/categories?scope=…`, so an admin can add, rename, reorder or retire
+    one without a release.
+  - **Paginated lists.** `GET /api/posts` (and a user's reviews) take `limit` — default **100**,
+    capped at **200** — with `offset`, rejecting an out-of-range value with a 400 rather than
+    silently clamping it.
 - **OSM map.** Leaflet with click-to-place coordinates on new posts; `/map` plots located posts.
 - **Optional public directory.** Advertise your server, and accept peer registrations, only when
   you opt in.
