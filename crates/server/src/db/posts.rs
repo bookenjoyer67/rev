@@ -8,11 +8,60 @@ use komun_core::models::{
 };
 
 /// Every column the `Post` model is built from, in one place so `list` and `get` cannot drift.
-const POST_COLUMNS: &str = r#"id, author_id, kind, category, title, body,
-    location_name, location_lat, location_lon, urgency, quantity, status,
-    visibility, expires_at, tags, contact_method, images, verified_by, verified_at,
-    market_listed, price_cents, currency, price_negotiable, item_condition, sold_at, buyer_id,
-    created_at, updated_at"#;
+///
+/// Qualified with `p.` because both queries now join `categories` for the human label, and
+/// `created_at` / `updated_at` are ambiguous across the two tables.
+const POST_COLUMNS: &str = r#"p.id, p.author_id, p.kind, p.category, p.title, p.body,
+    p.location_name, p.location_lat, p.location_lon, p.urgency, p.quantity, p.status,
+    p.visibility, p.expires_at, p.tags, p.contact_method, p.images, p.verified_by, p.verified_at,
+    p.market_listed, p.price_cents, p.currency, p.price_negotiable, p.item_condition,
+    p.sold_at, p.buyer_id, p.created_at, p.updated_at"#;
+
+/// `LEFT JOIN`, not `JOIN`: `posts.category` is a NOT NULL foreign key so the row always exists
+/// today, but an inner join would silently drop a post if that ever stopped being true, and
+/// losing a post from the feed is a worse failure than showing one without a label.
+const CATEGORY_JOIN: &str = "LEFT JOIN categories c ON c.slug = p.category";
+
+/// A list request with no `limit` still gets one. An unbounded feed is a denial of service the
+/// caller does not have to ask for, and it grows with the server.
+pub const DEFAULT_LIMIT: i64 = 100;
+pub const MAX_LIMIT: i64 = 200;
+
+/// The validated shape of a list request.
+///
+/// Built by `api::posts::validate_filters`, which is where a malformed query string becomes a 400
+/// naming the offending parameter. By the time one of these exists every field is known-good, so
+/// this layer only binds it — there is no second, divergent idea here of what a legal filter is.
+#[derive(Debug, Clone)]
+pub struct PostFilter {
+    pub kind: Option<PostKind>,
+    pub category: Option<String>,
+    pub status: Option<PostStatus>,
+    pub q: Option<String>,
+    pub min_price_cents: Option<i64>,
+    pub max_price_cents: Option<i64>,
+    pub currency: Option<String>,
+    pub item_condition: Option<ItemCondition>,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+impl Default for PostFilter {
+    fn default() -> Self {
+        Self {
+            kind: None,
+            category: None,
+            status: None,
+            q: None,
+            min_price_cents: None,
+            max_price_cents: None,
+            currency: None,
+            item_condition: None,
+            limit: DEFAULT_LIMIT,
+            offset: 0,
+        }
+    }
+}
 
 /// The public feed.
 ///
@@ -23,34 +72,44 @@ const POST_COLUMNS: &str = r#"id, author_id, kind, category, title, body,
 /// route has no authenticated caller to compare against), and the two moderation statuses —
 /// `db/reports.rs` sets `status = 'hidden'` when a report is upheld, and the old predicate put
 /// the hidden post straight back in the feed.
-pub async fn list(
-    pool: &PgPool,
-    kind: Option<String>,
-    category: Option<String>,
-    status: Option<String>,
-    q: Option<String>,
-) -> Result<Vec<Post>> {
-    let search = q.map(|s| format!("%{}%", s));
+///
+/// M1.4 adds the marketplace predicates. Note what a price filter does to an aid post: its
+/// `price_cents` is NULL, `NULL >= $5` is NULL, and the row drops out — asking for a price range
+/// asks for things that have a price, which is what a market view wants.
+pub async fn list(pool: &PgPool, filter: &PostFilter) -> Result<Vec<Post>> {
+    let search = filter.q.as_deref().map(|s| format!("%{}%", s));
     let rows = sqlx::query_as::<_, PostRow>(&format!(
-        r#"SELECT {POST_COLUMNS}
-           FROM posts
-           WHERE status NOT IN ('withdrawn', 'hidden', 'flagged')
-           AND visibility = 'public'
-           AND ($1::text IS NULL OR kind = $1)
-           AND ($2::text IS NULL OR category = $2)
-           AND ($3::text IS NULL OR status = $3)
-           AND ($4::text IS NULL OR title ILIKE $4 OR body ILIKE $4)
+        r#"SELECT {POST_COLUMNS}, c.label AS category_label
+           FROM posts p
+           {CATEGORY_JOIN}
+           WHERE p.status NOT IN ('withdrawn', 'hidden', 'flagged')
+             AND p.visibility = 'public'
+             AND ($1::text IS NULL OR p.kind = $1)
+             AND ($2::text IS NULL OR p.category = $2)
+             AND ($3::text IS NULL OR p.status = $3)
+             AND ($4::text IS NULL OR p.title ILIKE $4 OR p.body ILIKE $4)
+             AND ($5::bigint IS NULL OR p.price_cents >= $5)
+             AND ($6::bigint IS NULL OR p.price_cents <= $6)
+             AND ($7::text IS NULL OR p.currency = $7)
+             AND ($8::text IS NULL OR p.item_condition = $8)
            ORDER BY
-             CASE WHEN urgency = 'critical' THEN 0
-                  WHEN urgency = 'high' THEN 1
-                  WHEN urgency = 'medium' THEN 2
+             CASE WHEN p.urgency = 'critical' THEN 0
+                  WHEN p.urgency = 'high' THEN 1
+                  WHEN p.urgency = 'medium' THEN 2
                   ELSE 3 END,
-             created_at DESC"#
+             p.created_at DESC
+           LIMIT $9 OFFSET $10"#
     ))
-    .bind(kind)
-    .bind(category)
-    .bind(status)
+    .bind(filter.kind.map(|k| k.as_str()))
+    .bind(filter.category.as_deref())
+    .bind(filter.status.map(|s| s.as_str()))
     .bind(search)
+    .bind(filter.min_price_cents)
+    .bind(filter.max_price_cents)
+    .bind(filter.currency.as_deref())
+    .bind(filter.item_condition.map(|c| c.as_str()))
+    .bind(filter.limit)
+    .bind(filter.offset)
     .fetch_all(pool)
     .await?;
 
@@ -60,7 +119,10 @@ pub async fn list(
 /// `Ok(None)` rather than an error, so the caller can answer 404 instead of 500.
 pub async fn get(pool: &PgPool, id: Uuid) -> Result<Option<Post>> {
     let row = sqlx::query_as::<_, PostRow>(&format!(
-        "SELECT {POST_COLUMNS} FROM posts WHERE id = $1"
+        "SELECT {POST_COLUMNS}, c.label AS category_label
+         FROM posts p
+         {CATEGORY_JOIN}
+         WHERE p.id = $1"
     ))
     .bind(id)
     .fetch_optional(pool)
@@ -163,6 +225,8 @@ struct PostRow {
     author_id: Uuid,
     kind: String,
     category: String,
+    /// From the `categories` join. `Option` because the join is a LEFT JOIN.
+    category_label: Option<String>,
     title: String,
     body: Option<String>,
     location_name: Option<String>,
@@ -200,7 +264,10 @@ impl From<PostRow> for Post {
             // over the wire as an aid need.
             kind: PostKind::parse(&r.kind).unwrap_or(PostKind::Need),
             category: r.category,
-            category_label: None,
+            // SPEC 1.6: the label is what a human reads, and it is the only part of the taxonomy
+            // that can be renamed at runtime. Serving the slug alone forced every client to keep
+            // its own copy of the list to render a post.
+            category_label: r.category_label,
             title: r.title,
             body: r.body,
             location_name: r.location_name,
@@ -240,6 +307,7 @@ mod tests {
             author_id: Uuid::now_v7(),
             kind: kind.to_string(),
             category: "food".to_string(),
+            category_label: Some("Food".to_string()),
             title: "t".to_string(),
             body: None,
             location_name: None,

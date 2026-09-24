@@ -16,6 +16,7 @@ pub struct Config {
     pub email: EmailConfig,
     pub registration: RegistrationConfig,
     pub geocode: GeocodeConfig,
+    pub market: MarketConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -166,6 +167,40 @@ impl RegistrationConfig {
     }
 }
 
+/// Server-level marketplace defaults (SPEC B7).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct MarketConfig {
+    /// ISO-4217 alphabetic code used when a market post arrives without a currency of its own.
+    ///
+    /// **Unset by default, and deliberately so.** There is no currency that is right for an
+    /// unconfigured server, and guessing one would silently price every listing on a node in a
+    /// unit nobody chose. When this is `None` and a listing carries no currency, the listing
+    /// simply has none.
+    pub default_currency: Option<String>,
+}
+
+impl MarketConfig {
+    /// SPEC B7: a listing's own currency always wins. The configured default is consulted only
+    /// when a market post arrives without one, and when neither exists the post keeps no
+    /// currency rather than being given an invented one.
+    pub fn resolve_currency(&self, listed: Option<&str>) -> Option<String> {
+        match listed {
+            Some(code) => Some(code.to_string()),
+            None => self.default_currency.clone(),
+        }
+    }
+}
+
+/// An ISO-4217 alphabetic code is exactly three uppercase ASCII letters.
+///
+/// One function, three callers: `[market] default_currency` at startup, the create-post
+/// validator, and the `?currency=` list filter. They used to be able to disagree with each other
+/// and with `chk_posts_currency` (`currency ~ '^[A-Z]{3}$'`); now they cannot.
+pub fn is_currency_code(code: &str) -> bool {
+    code.len() == 3 && code.bytes().all(|b| b.is_ascii_uppercase())
+}
+
 impl Default for PostsConfig {
     fn default() -> Self {
         Self {
@@ -265,6 +300,7 @@ impl Config {
 
         config.apply_env_overrides();
         config.validate_registration()?;
+        config.validate_market()?;
         Ok(config)
     }
 
@@ -284,6 +320,25 @@ impl Config {
             ));
         }
 
+        Ok(())
+    }
+
+    /// M1.1: a malformed `[market] default_currency` is a startup failure, not a surprise at the
+    /// first listing.
+    ///
+    /// The shape check belongs here rather than at the point of use because the alternative is
+    /// worse in both directions: a server that accepted `"usd"` would write it into `currency`
+    /// and hit `chk_posts_currency` as a 500 on somebody's listing, and a server that quietly
+    /// discarded it would price listings in nothing while the operator believed otherwise.
+    pub fn validate_market(&self) -> anyhow::Result<()> {
+        if let Some(code) = &self.market.default_currency {
+            if !is_currency_code(code) {
+                return Err(anyhow::anyhow!(
+                    "[market] default_currency must be a three-letter uppercase ISO-4217 code \
+                     such as \"USD\" (got {code:?}); remove the key to leave it unset"
+                ));
+            }
+        }
         Ok(())
     }
 
