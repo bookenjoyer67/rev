@@ -122,6 +122,15 @@ async fn get_conversation(
     Extension(auth): Extension<AuthUser>,
     Path(match_id): Path<Uuid>,
 ) -> Result<Json<crate::db::conversations::Conversation>, StatusError> {
+    // M2 addendum: this read used to go straight to the query, whose `WHERE ... AND (responder
+    // OR author)` collapsed "no such thread" and "not your thread" into one `anyhow` error that
+    // left here as a **500** saying "conversation not found". An outsider got a server error
+    // while the offers routes beside it answered the same request with a correct 403.
+    //
+    // The 404/403 pair is decided the same way here as on every other route on a thread, so the
+    // answer to "may I see this?" does not depend on which endpoint asked.
+    participant_thread(&state, match_id, auth.user_id).await?;
+
     let convo = crate::db::conversations::get_conversation(&state.pool, match_id, auth.user_id).await?;
     Ok(Json(convo))
 }
@@ -269,9 +278,11 @@ async fn create_offer(
             )
             .await?
         }
-        // An `offer` or a `counter` changes no state, so it is a plain append and is legal
-        // whatever the thread's status is: it adds a line to the trail and claims nothing.
-        OfferKind::Offer | OfferKind::Counter => DealStep::Done(
+        // An `offer` or a `counter` changes no state of its own — but a thread that is over does
+        // not take one. M2 addendum: this arm used to append whatever the status was, so a
+        // decline that had already withdrawn the thread was followed by a fresh offer sitting
+        // under it, which renders as a live number waiting for an answer nobody can give.
+        OfferKind::Offer | OfferKind::Counter => {
             crate::db::conversations::append_offer(
                 &state.pool,
                 match_id,
@@ -281,8 +292,8 @@ async fn create_offer(
                 currency.as_deref(),
                 offer.note.as_deref(),
             )
-            .await?,
-        ),
+            .await?
+        }
     };
 
     match step {
