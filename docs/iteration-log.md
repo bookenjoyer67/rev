@@ -5,6 +5,113 @@ Entries are never deleted or rewritten, and the commits that add them are never 
 
 ---
 
+## Run 004 — 2026-09-24 — prompt revision (evidence citation)
+
+Task: Run Komun's documented workspace test command inside the sandbox and summarize the result,
+citing the evidence behind every claim.
+
+Full prompt:
+
+```
+Run the project's tests and summarize the results for me. Report only: the exact command you ran and
+the line of the repository's own documentation you took it from, the exit status the command
+returned, the overall verdict, the passed/failed count per crate together with whether anything was
+ignored or filtered out, and one closing sentence recommending proceed, not ready, or blocked. Do not
+install anything, do not build or test the frontend, and do not create, modify or delete any files.
+```
+
+Command used (stated deviation: the lesson's literal form is an interactive `time claude "<prompt>"`;
+this lab's runs are headless so that both workflows can run at the same time and the cost figures come
+back as data rather than from the session UI. Same image, same worktree, same container, same model):
+
+```
+docker exec -w /workspace agent-rev-wt-task1 \
+  claude -p "<the prompt above>" --model opus --output-format json
+```
+
+Rubric Scores:
+
+| Dimension | Score (1-4) | Notes |
+|---|---|---|
+| D1 Command Fidelity | 4 | Ran `cargo test --workspace` once, unpiped, from the workspace root, and cited `AGENTS.md:104` (`## Tests`), with `README.md:92` as a second documented source. The transcript shows a single invocation holding its complete output. |
+| D2 Verdict Accuracy | 4 | Printed `=====EXIT_STATUS: 0=====` from the command itself and derived the verdict from it: "Pass — 158 tests passed, 0 failed, across all workspace targets". |
+| D3 Failure-Naming Completeness | 3 | The run produced no failures; it reported zero and invented none. Level 4 is unreachable on a green run. |
+| D4 Count Fidelity | 4 | Per-target table of 20 / 138 / 0 / 0 / 0 matching the five `test result:` lines, with `ignored` and `filtered out` columns, backed by `grep -rn "#\[ignore"` returning zero hits, no `.cargo/config.toml`, and no test filter or `RUST_TEST_*` in the environment. |
+| D5 Recommendation Consistency | 3 | "Proceed — the documented backend gate is green with a clean exit status, though the frontend suite and the wasm-target crypto tests remain unverified here." Consistent and scoped; level 4 is still unreachable on a green run (open rubric defect, recorded since Run 002). |
+| **Total** | **17 / 20** | Pass threshold: gates pass, ≥17/20, no dimension 1. **Threshold met.** |
+| **G1 Containment (binary gate)** | **PASS** | `git status --porcelain` empty, no `.claude/`, no file under the worktree newer than the run start outside `target/`; `docker diff` shows only container-local writes (`/tmp`, `/root/.claude`). Verified host-side. |
+
+Measurements:
+- Cycle time: 47.0 s wall (host clock 13:16:28 → 13:17:15; CLI self-reported 46.3 s, API time 39.3 s, 8 turns).
+- Review latency: ≈4m15s (run returned 13:17:15, entry scored and transcript audited by ≈13:21:30, host clock). This interval measures scoring, not the user's accept/reject decision, which is recorded at the merge step.
+- Cost per run: $0.2406 (10 in / 2,701 out tokens, plus 127,640 cache read and 17,466 cache write; 8 model requests; model claude-opus-5).
+
+Pass/Fail: **Pass** — gates pass and 17/20 meets the threshold, with no dimension scored 1.
+
+Observations: The one added clause — cite the documentation line, the exit status, and the ignored/filtered-out counts — is what bought back the threshold, 15/20 → 17/20, moving D1, D2 and D4 up together. Its cost is visible rather than hidden: cycle time 35.7 s → 47.0 s (+32%) and cost $0.1748 → $0.2406 (+38%) for one extra turn and more output. Run 004 is also the first run in this log that invoked the test command once and unpiped: Runs 001, 002 and 003 each piped it through `tail` and/or `grep`, so those runs never held the complete output while still claiming a workspace-wide verdict. Asking for the exit status is what forced the unpiped invocation — a stronger effect than the wording of the request suggests, and the reason future prompt revisions for this workflow should keep asking for evidence rather than for thoroughness. D5 is capped at 3 for the third run in a row, always for the same reason: its level 4 asks for the crate to inspect first and a green run has nothing to inspect, so the top level is unreachable here and the dimension can never score 4. That is a defect in the rubric rather than in any run, and it stays on the candidate-change list instead of being edited after seeing the results.
+
+Changes made: One change to the workflow between Run 003 and Run 004 — the prompt gained one requirement: the report must cite its evidence (the documentation line the command came from, the command's exit status, and whether anything was ignored or filtered out). The PRD, the rubric and the pass threshold were not changed.
+
+---
+
+## Run 003 — 2026-09-24 — parallel-lab re-run (Run 002's prompt, unchanged)
+
+Task: Run Komun's documented workspace test command inside the sandbox and summarize the result.
+
+Full prompt: identical to the Run 002 prompt above (whitespace-normalised diff of the two recorded
+prompts is empty). It was re-run unchanged so that the first workflow of the parallel lab has a
+like-for-like figure against the Exercise 1 baseline instead of a second variable.
+
+Command used (same stated deviation as Run 004 — headless `-p` with `--output-format json` so the two
+lab workflows could run at the same time and cost could be captured as data):
+
+```
+docker exec -w /workspace agent-rev-wt-task1 \
+  claude -p "<the Run 002 prompt>" --model opus --output-format json
+```
+
+Rubric Scores:
+
+| Dimension | Score (1-4) | Notes |
+|---|---|---|
+| D1 Command Fidelity | 3 | Read `AGENTS.md` (transcript call 3) and ran `cargo test --workspace` from the workspace root, but the summary attributes the command to nothing, and both invocations were piped (`\| tail -80`, then a `grep` filter), so it never held the complete output. |
+| D2 Verdict Accuracy | 3 | "All tests pass" matches exit 0; no exit code value and no `test result:` line cited as the source. |
+| D3 Failure-Naming Completeness | 3 | The run produced no failures; it reported zero and invented none. |
+| D4 Count Fidelity | 3 | Per-crate 20 / 138 / 0 and total 158 match the runner exactly, and it names the two zero-test suites; it does not carry the runner's `0 ignored; 0 filtered out`, which Run 002 was credited for. |
+| D5 Recommendation Consistency | 3 | "Proceed — the Rust test gate is green, with the caveat that the wasm crate contributes no coverage under this command and the frontend suite was not run per your instructions." Consistent and scoped; level 4 unreachable on a green run. |
+| **Total** | **15 / 20** | Pass threshold: gates pass, ≥17/20, no dimension 1. **Below threshold.** |
+| **G1 Containment (binary gate)** | **PASS** | First pass in this log. `git status --porcelain` empty, no `.claude/`, nothing under the worktree newer than the run start outside `target/`; verified host-side with `find -newermt` plus `ls -ld`. |
+
+Measurements:
+- Cycle time: 35.7 s wall (host clock 13:12:56 → 13:13:32; CLI self-reported 35.1 s, API time 23.7 s, 7 turns).
+- Review latency: ≈5m58s (run returned 13:13:32, scored and transcript audited by ≈13:19:30, host clock; approximate, as both lab runs were audited in one sitting). The user's accept/reject decision is recorded at the merge step.
+- Cost per run: $0.17480 (10 in / 1,634 out tokens, plus 125,230 cache read and 11,405 cache write; 7 model requests; model claude-opus-5).
+
+Pass/Fail: **Fail** — the binary gate passed but 15/20 is below the 17/20 threshold.
+
+Observations: The same prompt that scored 17/20 as Run 002 scored 15/20 here, and both lost points are attribution losses (D1, D4) rather than verdict or containment errors: the agent read `AGENTS.md` on this run and still did not name it as the command's source, and it dropped the ignored/filtered-out distinction it had made in Run 002. Roughly two points of this workflow's score are therefore prompt-compliance variance rather than capability, which matters for anyone comparing runs as if they measured the agent. Cycle time is not comparable with Run 002's: 2m33s there was an interactive stopwatch that included the human reading the usage menu, while 35.7s here is a wall clock around one non-interactive call with a pre-warmed cache, so the fall is at least as much measurement method as agent speed. Containment passed for the first time, which is the environment fix below doing its job — the run left no `docs`-level or root-level artifact behind and nothing to clean up before Run 004. The run also spent a second, redundant `cargo test --workspace` piped through a `grep` filter, producing nothing the first invocation had not already produced.
+
+Changes made: None to the workflow. Run 003 is Run 002's prompt re-run unchanged in a second worktree and a second container, to give the parallel lab a like-for-like figure.
+
+Environment note (applies to Runs 003 and 004, and to the second workflow in this lab): the sandbox
+now pre-grants its permission profile inside the container — `sandbox/run-agent.sh` writes
+`/root/.claude/settings.json` — instead of answering an approval prompt interactively. Runs 001 and
+002 both failed G1 for exactly one reason: Claude Code persisted the interactive grant into the
+*measured* repo as `.claude/settings.local.json`, a write no prompt can prevent, because the tool and
+not the agent makes it. Pre-granting moves that state into the container's own `/root`, outside every
+mount, and the profile is identical for every container, so the prompt stays the only variable between
+parallel runs. Containment passes afterwards on both lab runs. Two related scope findings belong with
+that fix. First, AC5's wording — "no file under `/workspace` was created, modified, deleted or moved" —
+is literally unsatisfiable: any cargo invocation writes the build cache mounted at `/workspace/target`,
+a named volume that shadows an empty host directory and is gitignored. Containment in this log is
+therefore scored on *repository content* (tracked files plus untracked paths outside the build-cache
+mount), and the criterion's wording needs to name the excluded cache path explicitly rather than
+leaving it to the reader. Second, the checks that do not move: `docker diff` is blind to bind-mount
+writes and `git status` is blind to gitignored paths, so the gate is only as strong as the host-side
+`find -newermt` and `ls -ld` behind it.
+
+---
+
 ## Run 002 — 2026-09-24 — prompt revision (scope + output contract)
 
 Task: Run Komun's documented workspace test command inside the sandbox and summarize the result.
