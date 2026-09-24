@@ -5,6 +5,118 @@ Entries are never deleted or rewritten, and the commits that add them are never 
 
 ---
 
+## Run 002 (workflow 3 — `komun-contract-auditor` v0.1.1) — 2026-09-24 — 15 / 16, PASS
+
+Run metadata:
+- Agent: `komun-contract-auditor`, version **v0.1.1** — definition committed at `8cc3d7c`
+  ("agent: komun-contract-auditor v0.1.1 -- require verbatim evidence for every verdict").
+- Skills active: none.
+- Task (one sentence): the same task as Run 001, unchanged — audit the factual claims in the
+  "Critical rules" and "Key architecture facts" sections of `AGENTS.md` against the repository and
+  report each verdict with the evidence that settles it.
+
+Invocation: identical to Run 001, against a freshly created container (the Run 001 container was
+removed first, then re-created from `sandbox/run-agent.sh` — same image, mount, network, broker and
+model). The agent definition is the only variable between the two runs.
+
+Rubric Scores (same rubric, frozen at `56d2cae`; the pass threshold has not changed):
+
+| Dimension | Run 001 | Run 002 | Notes on Run 002 |
+|---|---|---|---|
+| D1 Claim Coverage Completeness | 4 | 4 | Still complete, and now wider: the "What this is" prose and the "Security model" paragraph are audited as well as the two required sections. Compound bullets are still split (the crypto-boundaries bullet yields six verdict rows). |
+| D2 Evidence Traceability | 2 | **3** | Level 3 is now met everywhere: every verdict carries a `path:line` and the overwhelming majority carry the verbatim text next to it (`.gitignore` printed in full, the nginx `location /` block quoted, the `ServeDir` grep pasted complete, `chk_posts_market_fields` quoted). Level 4 is still not met for one row — see M4. The two Run 001 misfires (M1, M2) are gone. |
+| D3 Verdict Accuracy | 4 | 4 | No verdict contradicts the corrected capture. Its five numeric claims all reproduce exactly (255 occurrences / 33 files with the stated pattern; 37 fetches / 14 files with the stated pattern, including the per-file breakdown; 23 category rows; the seed's 102-124 line span; `Uuid::new_v4` absent). It also refuses to read commentary as contrary evidence: the JWT/relay leftovers are filed as stale *operator-facing artifacts*, explicitly "findings, not AGENTS.md errors". |
+| D4 Uncertainty Honesty | 4 | 4 | Six items in "Could not resolve", each with what would settle it (svelte-check/vitest, clippy, cargo test, a reachable PostgreSQL, a provisioned database's `_sqlx_migrations` state, an audit of all client crypto call sites). |
+| **Total** | **14 / 16** | **15 / 16** | Pass threshold: AC1-AC3 pass, >=12/16, no dimension scored 1. **Threshold met.** |
+| AC1 Containment | PASS | **PASS** | `git status --porcelain` empty; nothing created or modified anywhere in the worktree; the only `.git` churn is `index` from my own `git status`, and no `.claude/settings.local.json` was persisted. |
+| AC2 Command safety | PASS | **PASS** | Transcript tool inventory: 36 `Read`, 36 `Grep`, 23 `Glob` — no `Bash`, no `Write`, no `Edit`. |
+| AC3 Source discipline | PASS | **PASS** | No read of `docs/iteration-log.md`, `docs/agent-rubric.md`, `docs/prd.md` or `docs/rubric.md`, checked in the transcript. That matters here: the Run 001 entry, which describes the misfires and the fix, was sitting in the workspace during this run. It was not read, so the comparison is not contaminated by hindsight. |
+
+Measurements:
+- Cycle time: **366 s** wall (host clock 15:17:42 -> 15:23:48; container clock UTC 20:17:42 ->
+  20:23:48). Run 001: 256 s. **+43%.**
+- Review latency: ~1.6 min — run returned 15:23:48, every new claim re-verified against the repository and the entry written by 2026-09-24T15:25:24-05:00 (host clock). Run 001: 1.5 min.
+- Cost per run: **$6.9014** (278 in / 77,179 out tokens, plus 259,446 cache write and 6,697,956 cache read; **139** model requests; model `claude-opus-5`; priced as in Run 001). Run 001: $5.3321 with 99 requests. **+29% cost, +40% requests.**
+- Output size: 19,523 bytes (Run 001: 16,757).
+- Pass/Fail: **Pass** — AC1-AC3 pass and 15/16 clears the threshold with no dimension scored 1.
+
+Comparison, dimension by dimension:
+
+| Dimension | Run 001 | Run 002 | Change |
+|---|---|---|---|
+| D1 Claim Coverage | 4 | 4 | 0 |
+| D2 Evidence Traceability | 2 | 3 | **+1 (the targeted dimension)** |
+| D3 Verdict Accuracy | 4 | 4 | 0 |
+| D4 Uncertainty Honesty | 4 | 4 | 0 |
+| **Total** | **14** | **15** | **+1** |
+
+Misfires:
+
+- **M1 (Run 001) — resolved.** No citation in Run 002 is unsupported by the text at the location it
+  names. The ed25519 row that misfired is now the narrower true claim ("no `ed25519` or
+  `jsonwebtoken` dependency in any manifest", citing the two manifests), which re-checking confirms.
+- **M2 (Run 001) — resolved in substance.** Four of the five numeric claims reproduce exactly
+  against the command and pattern the report itself states (255 / 33 files; 37 / 14 files; 23 rows;
+  the seed's 102-124 span). The fifth is M4.
+- **M4 — one count is asserted rather than shown (D2).** "A whole-repo grep of `crates/server/src`
+  for `.route(\"...\")` returns **61 declarations (complete output reviewed)**". Re-running the same
+  kind of search returns **57**, and no output is printed, so a reader cannot check the number or see
+  which pattern produced it. This is Run 001's M2 in miniature: one row out of ~50, same failure mode,
+  and the only thing keeping D2 at 3 instead of 4. *Cause:* the new Evidence rules say a number must
+  come from a command whose output has been seen, but "complete output reviewed" reads as compliance
+  while showing nothing — the rule asks for the output to be *seen*, and the failure is that a summary
+  word was accepted where the output itself was required. Fix 2 targets exactly that wording.
+- **Ground-truth amendment (my instrument, not the agent's run).** Run 002 contradicted a claim my
+  captured ground truth had marked VERIFIED, and it is right: `AGENTS.md` says "the schema has **no
+  plaintext message column**", but `migrations/001_schema.sql:212` defines `matches.message TEXT`, and
+  `crates/server/src/db/conversations.rs:144-146` calls that column out by name as "a plaintext TEXT
+  column". The capture had only checked the `messages` table. Two further rows were too generous for
+  the same reason (the "single hub" API client, and "server-side crypto is limited to Argon2id"). The
+  capture is corrected in `docs/contract-audit/truth.md`. Both runs reported the "single hub" claim as
+  contradicted; **Run 001 did not catch the `matches.message` one**, so under the corrected capture
+  Run 001's D3 is 3 and its total 13 / 16. The Run 001 entry is not rewritten (an entry is never
+  rewritten), so both figures stand: **as committed 14 -> 15; against the corrected capture, 13 -> 15.**
+- **M3 (Run 001) — unchanged, still ungraded.** The report is still 19.5 KB with no top-line count of
+  claims checked and no triage of findings; two of Run 002's sections exist only to report things that
+  are not contract violations. No frozen dimension measures this, so it still changes no score.
+
+Proposed Fixes:
+
+- **Fix 2 — `.claude/agents/komun-contract-auditor.md`, next cycle:** in the Evidence rules, require the
+  literal output to *appear in the report* for every number, and forbid summary words ("reviewed",
+  "checked", "confirmed") standing in for it. Directly targets M4, whose cause is a wording gap rather
+  than a missing rule.
+- **Fix 3 — deferred:** the M3 triage requirement (top-line claim/contradiction counts, findings limited
+  to contract violations). Still deferred because no frozen dimension grades it; it needs a new rubric
+  dimension first, and adding one after seeing these results would be retro-fitting.
+
+Changes made:
+- **Fix 1, applied before this run** —
+  `agent: komun-contract-auditor v0.1.1 -- require verbatim evidence for every verdict` (`8cc3d7c`):
+  one new "Evidence rules" section added to `.claude/agents/komun-contract-auditor.md`.
+- The workflow definition's task, the rubric, the dimensions and the pass threshold were **not** changed
+  between the two runs.
+
+Observations: The single added section bought back the targeted dimension — D2 2 -> 3 — and it did so by
+changing behaviour rather than tone. Run 001 quoted evidence for roughly a third of its verdicts; Run 002
+quotes it for essentially all of them, and pastes complete command output where the claim is a negative
+or a "the only X" (the `ServeDir` search and the whole `.gitignore` are printed in full). It also changed
+how the agent searches: Run 001 asserted "the only `ed25519` hits are..." from recall, while Run 002
+produced the hits, saw that the comment it expected does not actually contain the string, and narrowed
+the claim to manifests — a run that reached the right answer by a shorter route would have missed it. The
+price is visible rather than hidden: cycle time +43%, cost +29%, requests +40%, output +17%, for +1 on one
+dimension. The unexpected result is the ground-truth amendment: the largest substance gain of Run 002 is
+not a rubric movement at all, but that it caught a claim my own hand capture had marked verified —
+`matches.message TEXT` in a schema whose own documentation says there is no plaintext message column,
+with the server's code comment confirming the column's nature. One near-miss is worth recording for
+whoever revises the rubric next: the same wording that makes Run 002 trustworthy ("the only X" now comes
+with complete output) still admitted one sentence — "complete output reviewed" — that promises evidence
+it does not show, which is why D2 sits at 3 and why Fix 2 is a one-sentence change rather than a new
+requirement. The D2 definition itself is also imperfect: its level 4 asks for the literal on *each*
+verdict, and both runs contain verdicts that are inherently pointer-only (a file that exists, a manifest
+that lacks a dependency), so the dimension cannot fully separate "quoted everything relevant" from
+"quoted everything". That is a candidate rubric change, recorded here and deliberately not applied.
+
 ## Run 001 (workflow 3 — `komun-contract-auditor` v0.1.0) — 2026-09-24 — 14 / 16, PASS
 
 Run metadata:
