@@ -38,7 +38,7 @@ Rubric Scores (rubric frozen at `56d2cae`, written before this run):
 
 Measurements:
 - Cycle time: 256 s wall (host clock 15:11:36 → 15:15:52; container clock UTC 20:11:36 → 20:15:52).
-- Review latency: ≈54781.5 min — run returned 15:15:52, output read, every cited pointer re-checked against the repository and the entry written by 2026-09-24T15:17:22-05:00 (host clock). This measures my scoring and verification work, not the user's accept/reject decision.
+- Review latency: ≈1.5 min — run returned 15:15:52, output read, every cited pointer re-checked against the repository and the entry written by 2026-09-24T15:17:22-05:00 (host clock). This measures my scoring and verification work, not the user's accept/reject decision.
 - Cost per run: **$5.3321** (198 in / 68,670 out tokens, plus 270,524 cache write and 3,847,113 cache read; 99 model requests; model `claude-opus-5`; token counts summed from the session transcript, priced at $5/$25 per M in/out with cache write at 1.25x and cache read at 0.1x).
 - Pass/Fail: **Pass** — AC1–AC3 pass and 14/16 clears the threshold with no dimension scored 1.
 
