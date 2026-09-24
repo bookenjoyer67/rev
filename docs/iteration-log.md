@@ -5,6 +5,22 @@ Entries are never deleted or rewritten, and the commits that add them are never 
 
 ---
 
+## Run 001 (workflow 2 — clippy lint gate) — 2026-09-24 — 19 / 20, PASS
+
+Task: Run Komun's documented lint command inside the sandbox and report every diagnostic it prints,
+grouped by lint rule and by file, writing the report to `docs/clippy-report.md` and changing no code.
+
+Rubric 19 / 20 (D1 4, D2 4, D3 3, D4 4, D5 4); binary gates G1 (containment) and G2 (report contract)
+both pass. Cycle time 2m 25.9s, cost $0.68125, 26 model requests, model claude-opus-5.
+
+This is the second workflow of the Module 1 parallel-lab exercise, run at the same time as Run 003 of
+the workspace test gate, in its own Git worktree and its own sandbox container. The full entry — task,
+exact prompt, per-dimension scoring rationale and observations — lives in
+`docs/clippy-gate/iteration-log.md`; this repository-wide log carries the record so both workflows
+appear in the same history.
+
+---
+
 ## Run 002 — 2026-09-24 — prompt revision (scope + output contract)
 
 Task: Run Komun's documented workspace test command inside the sandbox and summarize the result.
