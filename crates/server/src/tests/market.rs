@@ -369,6 +369,184 @@ mod categories_tests {
     }
 }
 
+/// P1 — the `scope` in an admin **body**, not in a query string.
+///
+/// The defect these pin was only ever visible through axum's `Json` extractor: with the field
+/// typed `CategoryScope`, a bad value was rejected before any code in `api::categories` ran, so no
+/// pure function could be asked about it. That is why this module goes through a real router and a
+/// real request rather than calling a validator.
+///
+/// The pool here is deliberately unreachable. The 400 is decided before the first query, so the
+/// rejection is exact; the accepted body's **201** needs rows and a live Postgres and therefore
+/// belongs to the card's runtime gate — what is proved here is that a valid body is no longer
+/// stopped by any of this endpoint's own validation and goes on to the database.
+#[cfg(test)]
+mod category_body_scope_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use axum::{
+        body::Body,
+        extract::Extension,
+        http::{header, Request, StatusCode},
+        routing::post,
+        Router,
+    };
+    use sqlx::postgres::PgPoolOptions;
+    use tower::ServiceExt;
+    use uuid::Uuid;
+
+    use komun_core::models::CategoryScope;
+
+    use crate::api::categories::{accepted_scopes, create_category, parse_body_scope};
+    use crate::auth::AuthUser;
+    use crate::{config::Config, rate_limit, sessions, AppState};
+
+    /// `create_category` mounted alone: no `require_admin`, because the guard is M1.3's and would
+    /// need the database this test does not have. The admin is injected as the extension the
+    /// middleware would have inserted.
+    fn app() -> Router {
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            // Port 1 refuses instantly; without a short deadline the pool would retry for the
+            // 30-second default before the handler could report anything.
+            .acquire_timeout(Duration::from_millis(300))
+            .connect_lazy("postgres://komun:komun@127.0.0.1:1/komun_unreachable")
+            .expect("a lazy pool does not connect");
+
+        let config: Config = toml::from_str("").expect("parse empty config");
+        let state = AppState {
+            pool,
+            config: Arc::new(config),
+            rate_limiter: Arc::new(rate_limit::RateLimiter::new()),
+            mailer: Arc::new(None),
+            trusted_proxies: Arc::new(Vec::new()),
+            salt_pepper: Arc::new(sessions::generate_pepper()),
+        };
+
+        Router::new()
+            .route("/api/admin/categories", post(create_category))
+            .layer(Extension(AuthUser {
+                user_id: Uuid::now_v7(),
+                session_id: Uuid::now_v7(),
+                role: "admin".to_string(),
+                email_verified: true,
+            }))
+            .with_state(state)
+    }
+
+    async fn create(body: &str) -> (StatusCode, String) {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/admin/categories")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .expect("build request"),
+            )
+            .await
+            .expect("the router answers");
+
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("read the body");
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// The card's case, both halves. `"nope"` must be this endpoint's own 400 naming the accepted
+    /// values — not axum's 422 in serde's words — and `"market"` must still be accepted.
+    #[tokio::test]
+    async fn an_unknown_body_scope_is_a_400_naming_the_accepted_values() {
+        let (status, body) = create(r#"{"slug":"polish-probe","label":"P","scope":"nope"}"#).await;
+
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "an unknown body scope must be a 400, not the extractor's 422: {body}"
+        );
+        for scope in CategoryScope::ALL {
+            assert!(body.contains(scope.as_str()), "the 400 must list {scope}, got: {body}");
+        }
+        assert!(body.contains("nope"), "the 400 must echo the bad value, got: {body}");
+        assert!(
+            !body.contains("unknown variant") && !body.contains("Failed to deserialize"),
+            "serde's wording must not reach the caller, got: {body}"
+        );
+
+        // The same call with a real scope clears every check this endpoint makes and reaches the
+        // database, which is unreachable here by construction. A 400 or a 422 would mean the fix
+        // had started refusing valid bodies; the card's runtime gate is where this turns into 201.
+        let (status, body) = create(r#"{"slug":"polish-probe","label":"P","scope":"market"}"#).await;
+        assert_eq!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "a valid create must pass validation and fail only at the absent database: {body}"
+        );
+        assert!(
+            !body.contains("scope"),
+            "a valid scope must not be mentioned in the failure at all, got: {body}"
+        );
+
+        // And the value that reaches `db::categories::create` is the one that was asked for.
+        assert_eq!(parse_body_scope("market"), Ok(CategoryScope::Market));
+    }
+
+    /// A body that is not JSON, and one that is not there at all, stay a 400 — never a panic and
+    /// never a 500 reported as an incident.
+    ///
+    /// A body that *is* JSON but is the wrong shape (`[]`, or an object missing `slug`) is still
+    /// the extractor's 422, exactly as it was before P1 and as it is for every other `Json<T>`
+    /// body in this crate. P1 changed one thing only: a `scope` that is present and wrong.
+    #[tokio::test]
+    async fn a_missing_or_malformed_body_is_a_400() {
+        for body in ["", "   ", "{", "not json at all", r#"{"slug":"x","#] {
+            let (status, text) = create(body).await;
+            assert_eq!(
+                status,
+                StatusCode::BAD_REQUEST,
+                "body {body:?} must be a 400, got {status}: {text}"
+            );
+            assert!(
+                !text.contains("panicked"),
+                "body {body:?} must not panic, got: {text}"
+            );
+        }
+
+        for body in ["[]", r#"{"slug":"x"}"#] {
+            let (status, _) = create(body).await;
+            assert_eq!(
+                status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "body {body:?} is a shape error, which P1 leaves exactly where it was"
+            );
+        }
+    }
+
+    /// The two halves of the endpoint family must not merely both answer 400 — they must say the
+    /// same sentence, which is why `parse_scope` delegates to `parse_body_scope`.
+    #[test]
+    fn the_body_and_the_query_refuse_a_bad_scope_in_the_same_words() {
+        use crate::api::categories::parse_scope;
+
+        let from_query = parse_scope(Some("nope")).expect_err("the query path rejects it");
+        let from_body = parse_body_scope("nope").expect_err("the body path rejects it");
+        assert_eq!(from_query, from_body);
+        assert_eq!(accepted_scopes(), "aid, market, both");
+
+        // A body that names `scope` is naming one, so blank is a mistake rather than "no filter" —
+        // the one place the two paths are allowed to differ.
+        assert!(parse_body_scope("  ").is_err(), "a blank body scope is not a scope");
+        assert_eq!(parse_scope(Some("  ")), Ok(None));
+
+        for scope in CategoryScope::ALL {
+            assert_eq!(parse_body_scope(scope.as_str()), Ok(*scope));
+            assert_eq!(parse_body_scope(&format!(" {scope} ")), Ok(*scope));
+        }
+    }
+}
+
 /// M1.4 — the market filters on `GET /api/posts`.
 #[cfg(test)]
 mod post_filter_tests {

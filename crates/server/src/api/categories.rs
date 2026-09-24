@@ -51,6 +51,58 @@ struct ScopeQuery {
     scope: Option<String>,
 }
 
+/// The `POST /api/admin/categories` body, with `scope` left as a `String`.
+///
+/// P1: this is M1.4's reasoning applied to a body rather than a query string. Typing the field
+/// `CategoryScope` hands the rejection to axum's `Json` extractor, which never reaches this module
+/// and answers **422** in serde's own vocabulary — "unknown variant `nope`, expected one of `aid`,
+/// `market`, `both`" — while `GET /api/categories?scope=nope` answers a **400** that names the
+/// accepted values. One endpoint family cannot hold two opinions about what a bad scope is, so the
+/// body goes through [`parse_body_scope`] like every other market input.
+#[derive(Deserialize)]
+pub(crate) struct CreateCategoryBody {
+    slug: String,
+    label: String,
+    scope: String,
+    sort_order: Option<i32>,
+}
+
+impl CreateCategoryBody {
+    fn into_input(self) -> Result<CreateCategory, String> {
+        Ok(CreateCategory {
+            scope: parse_body_scope(&self.scope)?,
+            slug: self.slug,
+            label: self.label,
+            sort_order: self.sort_order,
+        })
+    }
+}
+
+/// The `PATCH /api/admin/categories/{slug}` body. Same defect, same fix: `scope` was an
+/// `Option<CategoryScope>`, so `{"scope":"nope"}` was a 422 from the extractor here too.
+///
+/// An absent `scope` and an explicit `"scope": null` both mean "leave the scope alone", exactly as
+/// they did when the field was typed — what changes is only that a *present* wrong value is now
+/// this endpoint's own 400.
+#[derive(Deserialize)]
+struct UpdateCategoryBody {
+    label: Option<String>,
+    scope: Option<String>,
+    sort_order: Option<i32>,
+    active: Option<bool>,
+}
+
+impl UpdateCategoryBody {
+    fn into_input(self) -> Result<UpdateCategory, String> {
+        Ok(UpdateCategory {
+            scope: self.scope.as_deref().map(parse_body_scope).transpose()?,
+            label: self.label,
+            sort_order: self.sort_order,
+            active: self.active,
+        })
+    }
+}
+
 /// What a caller without a session sees: the three fields a form needs.
 ///
 /// `sort_order` is an ordering mechanism rather than information — the rows arrive in that order
@@ -93,11 +145,18 @@ async fn admin_list_categories(
     Ok(Json(rows))
 }
 
-async fn create_category(
+/// `pub(crate)` for the same reason the validators are: `crate::tests::market` mounts this handler
+/// on a bare router to pin the status and the message a bad `scope` now produces, which is a fact
+/// about the `Json` extractor and so cannot be observed by calling a pure function.
+pub(crate) async fn create_category(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
-    Json(input): Json<CreateCategory>,
+    Json(body): Json<CreateCategoryBody>,
 ) -> Result<(StatusCode, Json<Category>), StatusError> {
+    // Before the slug and the label, because that is the order the caller saw yesterday: the
+    // extractor rejected a bad scope before this function ran at all.
+    let input = body.into_input().map_err(bad_request)?;
+
     validate_slug(&input.slug).map_err(bad_request)?;
     validate_label(&input.label).map_err(bad_request)?;
 
@@ -128,8 +187,10 @@ async fn update_category(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
     Path(slug): Path<String>,
-    Json(input): Json<UpdateCategory>,
+    Json(body): Json<UpdateCategoryBody>,
 ) -> Result<Json<Category>, StatusError> {
+    let input = body.into_input().map_err(bad_request)?;
+
     if let Some(label) = &input.label {
         validate_label(label).map_err(bad_request)?;
     }
@@ -225,13 +286,24 @@ pub(crate) fn parse_scope(raw: Option<&str>) -> Result<Option<CategoryScope>, St
         return Ok(None);
     };
 
-    match CategoryScope::parse(value) {
-        Some(scope) => Ok(Some(scope)),
-        None => Err(format!(
+    parse_body_scope(value).map(Some)
+}
+
+/// Parse a `scope` that arrived in a request body.
+///
+/// Unlike [`parse_scope`], where an absent or empty `?scope=` means "no filter", a body that
+/// mentions `scope` at all is naming one, so `""` is as wrong as `"nope"` and gets the same
+/// answer. The message is not merely similar to the query path's — it *is* the query path's, since
+/// `parse_scope` delegates here, which is what keeps one endpoint family from growing two
+/// vocabularies for the same mistake.
+pub(crate) fn parse_body_scope(raw: &str) -> Result<CategoryScope, String> {
+    let value = raw.trim();
+    CategoryScope::parse(value).ok_or_else(|| {
+        format!(
             "scope must be one of {} (got {value:?})",
             accepted_scopes()
-        )),
-    }
+        )
+    })
 }
 
 /// The accepted `?scope=` values, rendered from the enum so the error message cannot fall behind
