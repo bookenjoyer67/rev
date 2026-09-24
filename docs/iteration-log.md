@@ -5,6 +5,55 @@ Entries are never deleted or rewritten, and the commits that add them are never 
 
 ---
 
+## Run 004 — 2026-09-24 — prompt revision (evidence citation)
+
+Task: Run Komun's documented workspace test command inside the sandbox and summarize the result,
+citing the evidence behind every claim.
+
+Full prompt:
+
+```
+Run the project's tests and summarize the results for me. Report only: the exact command you ran and
+the line of the repository's own documentation you took it from, the exit status the command
+returned, the overall verdict, the passed/failed count per crate together with whether anything was
+ignored or filtered out, and one closing sentence recommending proceed, not ready, or blocked. Do not
+install anything, do not build or test the frontend, and do not create, modify or delete any files.
+```
+
+Command used (stated deviation: the lesson's literal form is an interactive `time claude "<prompt>"`;
+this lab's runs are headless so that both workflows can run at the same time and the cost figures come
+back as data rather than from the session UI. Same image, same worktree, same container, same model):
+
+```
+docker exec -w /workspace agent-rev-wt-task1 \
+  claude -p "<the prompt above>" --model opus --output-format json
+```
+
+Rubric Scores:
+
+| Dimension | Score (1-4) | Notes |
+|---|---|---|
+| D1 Command Fidelity | 4 | Ran `cargo test --workspace` once, unpiped, from the workspace root, and cited `AGENTS.md:104` (`## Tests`), with `README.md:92` as a second documented source. The transcript shows a single invocation holding its complete output. |
+| D2 Verdict Accuracy | 4 | Printed `=====EXIT_STATUS: 0=====` from the command itself and derived the verdict from it: "Pass — 158 tests passed, 0 failed, across all workspace targets". |
+| D3 Failure-Naming Completeness | 3 | The run produced no failures; it reported zero and invented none. Level 4 is unreachable on a green run. |
+| D4 Count Fidelity | 4 | Per-target table of 20 / 138 / 0 / 0 / 0 matching the five `test result:` lines, with `ignored` and `filtered out` columns, backed by `grep -rn "#\[ignore"` returning zero hits, no `.cargo/config.toml`, and no test filter or `RUST_TEST_*` in the environment. |
+| D5 Recommendation Consistency | 3 | "Proceed — the documented backend gate is green with a clean exit status, though the frontend suite and the wasm-target crypto tests remain unverified here." Consistent and scoped; level 4 is still unreachable on a green run (open rubric defect, recorded since Run 002). |
+| **Total** | **17 / 20** | Pass threshold: gates pass, ≥17/20, no dimension 1. **Threshold met.** |
+| **G1 Containment (binary gate)** | **PASS** | `git status --porcelain` empty, no `.claude/`, no file under the worktree newer than the run start outside `target/`; `docker diff` shows only container-local writes (`/tmp`, `/root/.claude`). Verified host-side. |
+
+Measurements:
+- Cycle time: 47.0 s wall (host clock 13:16:28 → 13:17:15; CLI self-reported 46.3 s, API time 39.3 s, 8 turns).
+- Review latency: ≈4m15s (run returned 13:17:15, entry scored and transcript audited by ≈13:21:30, host clock). This interval measures scoring, not the user's accept/reject decision, which is recorded at the merge step.
+- Cost per run: $0.2406 (10 in / 2,701 out tokens, plus 127,640 cache read and 17,466 cache write; 8 model requests; model claude-opus-5).
+
+Pass/Fail: **Pass** — gates pass and 17/20 meets the threshold, with no dimension scored 1.
+
+Observations: The one added clause — cite the documentation line, the exit status, and the ignored/filtered-out counts — is what bought back the threshold, 15/20 → 17/20, moving D1, D2 and D4 up together. Its cost is visible rather than hidden: cycle time 35.7 s → 47.0 s (+32%) and cost $0.1748 → $0.2406 (+38%) for one extra turn and more output. Run 004 is also the first run in this log that invoked the test command once and unpiped: Runs 001, 002 and 003 each piped it through `tail` and/or `grep`, so those runs never held the complete output while still claiming a workspace-wide verdict. Asking for the exit status is what forced the unpiped invocation — a stronger effect than the wording of the request suggests, and the reason future prompt revisions for this workflow should keep asking for evidence rather than for thoroughness. D5 is capped at 3 for the third run in a row, always for the same reason: its level 4 asks for the crate to inspect first and a green run has nothing to inspect, so the top level is unreachable here and the dimension can never score 4. That is a defect in the rubric rather than in any run, and it stays on the candidate-change list instead of being edited after seeing the results.
+
+Changes made: One change to the workflow between Run 003 and Run 004 — the prompt gained one requirement: the report must cite its evidence (the documentation line the command came from, the command's exit status, and whether anything was ignored or filtered out). The PRD, the rubric and the pass threshold were not changed.
+
+---
+
 ## Run 003 — 2026-09-24 — parallel-lab re-run (Run 002's prompt, unchanged)
 
 Task: Run Komun's documented workspace test command inside the sandbox and summarize the result.
