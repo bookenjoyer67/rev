@@ -261,7 +261,7 @@ routes need `superadmin`.
 and caps at **200**, and `offset` is supported. Both reject an out-of-range value with a `400`
 rather than clamping it.
 
-### Marketplace endpoints (Phase B)
+### Marketplace endpoints
 
 **Categories**
 
