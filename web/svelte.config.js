@@ -25,8 +25,8 @@ const config = {
 					'https://tile.openstreetmap.org',
 					'https://*.tile.openstreetmap.org'
 				],
-				'frame-src': ['self', 'https://localhost:5174', 'https://app.piggpin.space', 'https://www.openstreetmap.org'],
-				'connect-src': ['self', 'http://localhost:*', 'https://localhost:5174', 'https://*.piggpin.space', 'wss://*.piggpin.space'],
+				'frame-src': ['self', 'https://localhost:5174', 'https://www.openstreetmap.org'],
+				'connect-src': ['self', 'http://localhost:*', 'https://localhost:5174'],
 				'font-src': ['self'],
 				'object-src': ['none'],
 				'base-uri': ['self'],

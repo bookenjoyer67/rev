@@ -27,17 +27,15 @@ services:
     environment:
       DATABASE_URL: postgres://${DB_USER:-komun}:${DB_PASSWORD:-komun}@db:5432/${DB_NAME:-komun}
       BIND_ADDR: 0.0.0.0:3000
-      JWT_SECRET: ${JWT_SECRET}
       KOMUN_CONFIG: /app/config.toml
     ports:
       - "3000:3000"
-      - "9001:9001"
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./config.toml:/app/config.toml:ro
-      - relay_data:/app/data/relay
+      - komun_data:/app/data
     cap_drop:
       - ALL
     security_opt:
@@ -60,4 +58,4 @@ services:
 
 volumes:
   pgdata:
-  relay_data:
+  komun_data:

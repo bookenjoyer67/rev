@@ -8,10 +8,9 @@ export default defineConfig({
 	server: {
 		allowedHosts: ['komun.buzz', 'localhost'],
 		proxy: {
-			'/api': 'http://localhost:3001',
-			'/avatars': 'http://localhost:3001',
-			'/post-images': 'http://localhost:3001',
-			'/community-images': 'http://localhost:3001',
+			'/api': 'http://localhost:3000',
+			'/avatars': 'http://localhost:3000',
+			'/post-images': 'http://localhost:3000',
 		},
 		fs: {
 			allow: ['..']

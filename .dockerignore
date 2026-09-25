@@ -15,7 +15,7 @@ web/build/
 web/.svelte-kit/
 crates/wasm/pkg/
 dist/
-data/relay/
+data/
 
 # IDE
 *.swp
