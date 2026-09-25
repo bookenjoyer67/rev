@@ -1,0 +1,22 @@
+-- 003: drop the unused plaintext `matches.message` column.
+--
+-- `matches.message` was left over from the pre-ciphertext design. Nothing has written it since the
+-- reshape: the create path omits the column on purpose and says so by name
+-- (`crates/server/src/db/conversations.rs` — writing the opening message there as well as into
+-- `messages` "would put a readable copy of the one thing this card exists to stop storing right back
+-- in the database"), and every read of `matches` enumerates its columns, so no query selects it.
+-- `crates/core` has no model that maps it either.
+--
+-- Keeping a plaintext message column that nothing writes — in a schema whose own documentation says
+-- no such column exists — is a standing invitation for a future write. So the column goes.
+--
+-- Additive only: `001_schema.sql` is checksum-bookmarked in every provisioned database and must not
+-- be edited (docs/DEVELOPMENT.md, "Migration rules"). This file is applied by the migrator on the
+-- next boot.
+--
+-- Before applying this to a long-lived database, confirm there is nothing to lose:
+--     SELECT count(*) FROM matches WHERE message IS NOT NULL;
+-- Nothing in the current code writes the column, so any non-zero result is pre-reshape data and
+-- should be dumped before this migration runs.
+
+ALTER TABLE matches DROP COLUMN message;
