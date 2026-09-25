@@ -102,3 +102,18 @@ Run 002 log entry; the Run 001 entry is not rewritten.
 Count note: the Run 001 log entry refers to "25 statically settleable claims". That was the first
 capture's row count before the corrections above; this file's 34 rows (29 verified, 2 contradicted,
 3 not statically settleable) is the corrected instrument. The log entry is not rewritten.
+
+## Corrections after Run 003 (verified by hand)
+
+1. **The `docs/` listing was incomplete, not wrong** — Run 003 reported `agent-rubric.md` and
+   `contract-audit/` as missing and `prd.md`/`rubric.md`/`iteration-log.md` as living under
+   `docs/clippy-gate/`. The first half is an artifact of this run's harness (those paths were moved
+   out of the mount for the duration and restored afterwards; all five exist in the committed tree).
+   The second half is a real omission, now fixed in `AGENTS.md`: the Module 1 lab keeps its own
+   `prd.md`, `rubric.md` and `iteration-log.md` under `docs/clippy-gate/`.
+2. **UUIDv7 has one exception.** `AGENTS.md` said "UUIDv7 primary keys" flat; `docs/DATABASE.md:3`
+   and `migrations/001_schema.sql:316` show `avatar_uploads.id` is `BIGSERIAL`. The bullet now names
+   it.
+
+Neither correction changes any Run 003 verdict: Run 003 flagged both itself, which is why its D3
+stays at 4.
