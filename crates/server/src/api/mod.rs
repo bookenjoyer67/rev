@@ -18,9 +18,8 @@ mod search;
 pub mod directory;
 mod users;
 
-// A3.2: `alliances` is no longer declared as a module. The file is still on disk because B owns
-// its deletion on the other branch; leaving the `mod` out means nothing compiles it and nothing
-// routes to it, so `GET /api/alliances` is a 404 here as the card requires.
+// `alliances` is gone: no `mod` declaration, no route, and no file on disk. `GET /api/alliances`
+// therefore 404s, which is the intended shape.
 
 use axum::Router;
 
