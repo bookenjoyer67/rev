@@ -69,7 +69,7 @@ byte makes every existing server refuse to boot. Schema changes are additive fil
 | `crates/wasm/` | Client crypto → WASM (x25519, XChaCha20Poly1305, Argon2, recovery codes) | Breaking changes here break all encryption; rebuild pkg + frontend |
 | `web/` | SvelteKit 5 SPA (static adapter, `ssr = false`) | Runes only. `web/src/lib/api/**` holds the shared API helpers, but most calls live in stores and routes: 37 `fetch()` calls to `/api/` in 14 files, 34 of them outside `lib/api/` (`lib/stores/auth.ts` alone holds 17) |
 | `migrations/` | `001_schema.sql` (frozen) + additive migrations | Never edit `001`; add `002+` |
-| `docs/` | ARCHITECTURE, CONVENTIONS, CRYPTO, DATABASE, DEVELOPMENT, DEPLOY | Plus the quality-control artifacts (`prd.md`, `rubric.md`, `agent-rubric.md`, `iteration-log.md`, `clippy-report.md`, `contract-audit/`); keep the prose docs in sync with the code |
+| `docs/` | ARCHITECTURE, CONVENTIONS, CRYPTO, DATABASE, DEVELOPMENT, DEPLOY | Plus the quality-control artifacts — `docs/prd.md`, `docs/rubric.md`, `docs/agent-rubric.md`, `docs/iteration-log.md`, `docs/clippy-report.md`, `docs/contract-audit/` — and the Module 1 lab's own copies under `docs/clippy-gate/` (`prd.md`, `rubric.md`, `iteration-log.md`). Keep the prose docs in sync with the code |
 | `deploy/` | nginx/OpenRC/setup/seed starting points | Docs only; no relay/WebSocket proxy |
 | `config.example.toml` | Documented config template | Keep in sync with `config.rs` defaults **except** `require_email_verification = false` here vs `true` in `config.rs` — deliberate, the example must boot without SMTP (a `true` with no `[email]` refuses to start) |
 | `scripts/` | Utility scripts | |
@@ -90,7 +90,8 @@ cargo run --bin komun-server              # -> http://localhost:3000
 
 ## Key architecture facts
 
-- UUIDv7 primary keys (time-sortable).
+- UUIDv7 primary keys (time-sortable). One exception, per `docs/DATABASE.md`: `avatar_uploads.id`
+  is `BIGSERIAL`.
 - Auth: email + password verifier (Argon2id), opaque DB sessions; **no JWT**. Middleware is
   `require_session` / `require_auth` / `require_admin` / `require_superadmin`, and it loads the
   role from the DB on every request.
