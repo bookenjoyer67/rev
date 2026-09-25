@@ -36,7 +36,11 @@ If you change crypto in `crates/wasm/`, rebuild the wasm package **and** the fro
 
 ### sqlx uses runtime queries
 All queries use `sqlx::query()` / `sqlx::query_as()`, not the compile-time macros. No
-`cargo sqlx prepare` step and no offline query cache — Docker builds work as-is.
+`cargo sqlx prepare` step and no offline query cache. Docker builds work as-is, and that is
+verified rather than assumed: `docker build -f docker/Dockerfile .` builds in ~2 min and the image
+provisions a fresh database (`001` → `003`) and answers `/api/health` on the example config. The
+builder stage is pinned to the workspace toolchain (`rust:1.95-slim-bookworm` vs the old `1.82`,
+which could not even parse the locked `image`/`sqlx` dependency's manifest).
 
 ### Frontend is Svelte 5 runes only
 No `$:`, no `export let`, no `on:click`. Use `$state`, `$derived`, `$effect`, `$props`, and

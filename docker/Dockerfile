@@ -1,4 +1,8 @@
-FROM rust:1.82-slim AS builder
+# The builder must match the workspace toolchain (docs/DEVELOPMENT.md records 1.95.0). Pinned to
+# 1.82 until 2026-09-25, when an actual image build failed: `aligned 0.4.3` (via `image` → `sqlx`)
+# needs the `edition2024` Cargo feature, which Cargo 1.82 cannot parse. bookworm matches the runtime
+# stage below, so the binary links against the same glibc.
+FROM rust:1.95-slim-bookworm AS builder
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
