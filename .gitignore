@@ -9,5 +9,6 @@ config.toml
 *.swp
 *.swo
 dist/
-data/relay/
+data/avatars/
+data/post-images/
 .hermes/
