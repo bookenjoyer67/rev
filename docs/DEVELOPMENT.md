@@ -108,8 +108,13 @@ The wasm package must exist before the frontend is installed:
 ```
 1. wasm-pack build crates/wasm --target web      # produces crates/wasm/pkg/
 2. cd web && npm install && npm run build        # requires crates/wasm/pkg/ FIRST
-3. cargo build --release --bin komun-server      # backend, serves web/build/
+3. cargo build --release --bin komun-server      # backend; serves the API and media only
 ```
+
+The backend does **not** serve the SPA: its router mounts `/api`, `/avatars`, `/post-images` and
+nothing else (`crates/server/src/main.rs`), and `web/build/` is served by the reverse proxy
+(`deploy/nginx-komun.conf`, "SvelteKit static build (adapter-static) with an SPA fallback"). Step 3
+does not depend on step 2.
 
 **The trap:** `web/package.json` depends on `"komun-wasm": "file:../crates/wasm/pkg"`.
 `npm install` resolves that local path, so if `crates/wasm/pkg/` does not exist yet the
@@ -220,9 +225,13 @@ malformed value (e.g. `"cad"`) refuses to start, naming the key, the value and t
   `cargo clippy -p komun-server --no-deps`, not from the build.
 - **`clippy --release -- -D warnings` is the standing gate** and it passes; the way to keep
   it there is to fix the code, never to add `#[allow]` (see `docs/CONVENTIONS.md` §6).
-- **Compare numbers, not just exit codes**, and re-measure after each change. The frontend is
-  currently at zero: `npm run check` → 0 errors / 0 warnings, `npm run build` green,
-  `npx vitest run` → all passing.
+- **Compare numbers, not just exit codes**, and re-measure after each change. Measured 2026-09-25,
+  on the commit that dropped `matches.message` (agent sandbox, `rustc 1.95.0` / `node v22.23.2`):
+  `cargo test --workspace` → **158 passed / 0 failed / 0 ignored**; `cargo clippy --release -- -D
+  warnings` → exit 0, no lints (the only line cargo prints is a future-incompat note about the
+  `sqlx-postgres` dependency); `npm run check` → **0 errors / 0 warnings**; `npm run build` green;
+  `npx vitest run` → **82 tests in 7 files, all passing**. The frontend gates need
+  `crates/wasm/pkg/` first.
 
 ## Not verifiable in a sandbox
 
